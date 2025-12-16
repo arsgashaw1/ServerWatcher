@@ -3,8 +3,11 @@ package com.logdashboard.web;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.logdashboard.analysis.AnalysisService;
+import com.logdashboard.config.DashboardConfig;
+import com.logdashboard.config.ServerPath;
 import com.logdashboard.model.LogIssue;
 import com.logdashboard.store.IssueStore;
+import com.logdashboard.util.EncodingDetector;
 
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
@@ -13,6 +16,9 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -33,10 +39,12 @@ public class ApiServlet extends HttpServlet {
     
     private final IssueStore issueStore;
     private final AnalysisService analysisService;
+    private final DashboardConfig config;
     
-    public ApiServlet(IssueStore issueStore, AnalysisService analysisService) {
+    public ApiServlet(IssueStore issueStore, AnalysisService analysisService, DashboardConfig config) {
         this.issueStore = issueStore;
         this.analysisService = analysisService;
+        this.config = config;
     }
     
     @Override
@@ -90,6 +98,9 @@ public class ApiServlet extends HttpServlet {
                     break;
                 case "/daterange":
                     handleGetDateRange(out);
+                    break;
+                case "/encoding/detect":
+                    handleDetectEncoding(req, out);
                     break;
                 default:
                     if (pathInfo.startsWith("/issues/")) {
@@ -263,18 +274,36 @@ public class ApiServlet extends HttpServlet {
     }
     
     private void handleGetServers(PrintWriter out) {
-        Set<String> servers = issueStore.getActiveServers();
         Map<String, Long> counts = issueStore.getServerCounts();
         
-        List<Map<String, Object>> serverList = new ArrayList<>();
-        for (String server : servers) {
-            Map<String, Object> serverInfo = new LinkedHashMap<>();
-            serverInfo.put("name", server);
-            serverInfo.put("issueCount", counts.getOrDefault(server, 0L));
-            serverList.add(serverInfo);
+        // Use LinkedHashMap to maintain insertion order and avoid duplicates
+        Map<String, Map<String, Object>> serverMap = new LinkedHashMap<>();
+        
+        // First, add all configured servers from the config file
+        if (config != null && config.getServers() != null) {
+            for (ServerPath serverPath : config.getServers()) {
+                String serverName = serverPath.getServerName();
+                if (serverName != null && !serverName.isEmpty()) {
+                    Map<String, Object> serverInfo = new LinkedHashMap<>();
+                    serverInfo.put("name", serverName);
+                    serverInfo.put("issueCount", counts.getOrDefault(serverName, 0L));
+                    serverMap.put(serverName, serverInfo);
+                }
+            }
         }
         
-        out.write(GSON.toJson(serverList));
+        // Then, add any servers from issues that might not be in config
+        Set<String> activeServers = issueStore.getActiveServers();
+        for (String server : activeServers) {
+            if (!serverMap.containsKey(server)) {
+                Map<String, Object> serverInfo = new LinkedHashMap<>();
+                serverInfo.put("name", server);
+                serverInfo.put("issueCount", counts.getOrDefault(server, 0L));
+                serverMap.put(server, serverInfo);
+            }
+        }
+        
+        out.write(GSON.toJson(new ArrayList<>(serverMap.values())));
     }
     
     private void handleHealthCheck(PrintWriter out) {
@@ -302,6 +331,123 @@ public class ApiServlet extends HttpServlet {
         dateRange.put("totalIssues", issueStore.getCurrentIssuesCount());
         
         out.write(GSON.toJson(dateRange));
+    }
+    
+    private void handleDetectEncoding(HttpServletRequest req, PrintWriter out) {
+        String filePath = req.getParameter("path");
+        
+        if (filePath == null || filePath.isEmpty()) {
+            // Return encoding info for all configured servers
+            List<Map<String, Object>> results = new ArrayList<>();
+            
+            if (config != null && config.getServers() != null) {
+                for (ServerPath server : config.getServers()) {
+                    Map<String, Object> serverInfo = new LinkedHashMap<>();
+                    serverInfo.put("serverName", server.getServerName());
+                    serverInfo.put("path", server.getPath());
+                    serverInfo.put("configuredEncoding", server.getEncoding());
+                    
+                    Path path = Paths.get(server.getPath());
+                    if (Files.exists(path)) {
+                        if (Files.isDirectory(path)) {
+                            // Check first file in directory
+                            try (var stream = Files.newDirectoryStream(path)) {
+                                for (Path file : stream) {
+                                    if (Files.isRegularFile(file)) {
+                                        addEncodingDetection(serverInfo, file);
+                                        break;
+                                    }
+                                }
+                            } catch (IOException e) {
+                                serverInfo.put("error", "Cannot read directory: " + e.getMessage());
+                            }
+                        } else {
+                            addEncodingDetection(serverInfo, path);
+                        }
+                    } else {
+                        serverInfo.put("error", "Path does not exist");
+                    }
+                    
+                    results.add(serverInfo);
+                }
+            }
+            
+            out.write(GSON.toJson(results));
+        } else {
+            // Detect encoding for specific file - with path validation to prevent traversal attacks
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("path", filePath);
+            
+            // Validate that the requested path is within configured server paths
+            if (!isPathWithinConfiguredServers(filePath)) {
+                result.put("error", "Access denied: path must be within a configured server path");
+                out.write(GSON.toJson(result));
+                return;
+            }
+            
+            Path path = Paths.get(filePath);
+            
+            if (!Files.exists(path)) {
+                result.put("error", "File does not exist");
+            } else if (!Files.isRegularFile(path)) {
+                result.put("error", "Path is not a regular file");
+            } else {
+                addEncodingDetection(result, path);
+            }
+            
+            out.write(GSON.toJson(result));
+        }
+    }
+    
+    /**
+     * Validates that a given file path is within one of the configured server paths.
+     * This prevents path traversal attacks by ensuring only files within allowed directories
+     * can be accessed.
+     * 
+     * @param filePath The file path to validate
+     * @return true if the path is within a configured server path, false otherwise
+     */
+    private boolean isPathWithinConfiguredServers(String filePath) {
+        if (config == null || config.getServers() == null || config.getServers().isEmpty()) {
+            return false;
+        }
+        
+        try {
+            // Normalize the requested path to resolve any ".." or "." components
+            Path requestedPath = Paths.get(filePath).toAbsolutePath().normalize();
+            
+            for (ServerPath server : config.getServers()) {
+                if (server.getPath() == null || server.getPath().isEmpty()) {
+                    continue;
+                }
+                
+                Path serverPath = Paths.get(server.getPath()).toAbsolutePath().normalize();
+                
+                // Check if the requested path starts with the server path
+                if (requestedPath.startsWith(serverPath)) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            // Invalid path or other error - deny access
+            return false;
+        }
+        
+        return false;
+    }
+    
+    private void addEncodingDetection(Map<String, Object> result, Path file) {
+        try {
+            result.put("analyzedFile", file.getFileName().toString());
+            EncodingDetector.EncodingResult detection = EncodingDetector.detectEncodingWithDetails(file);
+            result.put("detectedEncoding", detection.charset.displayName());
+            result.put("isEbcdic", detection.isEbcdic());
+            result.put("confidence", Math.round(detection.confidence * 100) + "%");
+            result.put("ebcdicScore", Math.round(detection.ebcdicScore * 100) + "%");
+            result.put("asciiScore", Math.round(detection.asciiScore * 100) + "%");
+        } catch (IOException e) {
+            result.put("error", "Cannot analyze file: " + e.getMessage());
+        }
     }
     
     private void handleExportIssues(HttpServletRequest req, HttpServletResponse resp) throws IOException {

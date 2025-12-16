@@ -4,6 +4,7 @@ import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.config.ServerPath;
 import com.logdashboard.model.LogIssue;
 import com.logdashboard.parser.LogParser;
+import com.logdashboard.util.EncodingDetector;
 
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -177,20 +178,41 @@ public class LogFileWatcher {
     
     /**
      * Initializes tracking for a file (sets position to end of file).
+     * If charset is UTF-8 (the default), attempts to auto-detect encoding.
      */
     private void initializeFile(Path file, String serverName, Charset charset) {
         try {
+            // Auto-detect encoding if not explicitly configured (UTF-8 is the default)
+            Charset effectiveCharset = charset;
+            boolean autoDetected = false;
+            
+            if (StandardCharsets.UTF_8.equals(charset)) {
+                // Try to auto-detect encoding
+                EncodingDetector.EncodingResult detection = EncodingDetector.detectEncodingWithDetails(file);
+                if (detection.isEbcdic() && detection.confidence > 0.5) {
+                    effectiveCharset = detection.charset;
+                    autoDetected = true;
+                    updateStatus(String.format("Auto-detected EBCDIC encoding for %s (confidence: %.0f%%)",
+                        file.getFileName(), detection.confidence * 100));
+                }
+            }
+            
             long size = Files.size(file);
-            int lineCount = countLines(file, charset);
+            int lineCount = countLines(file, effectiveCharset);
             filePositions.put(file, size);
             fileLineNumbers.put(file, lineCount);
             if (serverName != null) {
                 fileServerNames.put(file, serverName);
             }
-            fileCharsets.put(file, charset);
+            fileCharsets.put(file, effectiveCharset);
+            
             String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-            String charsetInfo = !StandardCharsets.UTF_8.equals(charset) ? 
-                " (" + charset.displayName() + ")" : "";
+            String charsetInfo = "";
+            if (!StandardCharsets.UTF_8.equals(effectiveCharset)) {
+                charsetInfo = autoDetected ? 
+                    " (auto-detected: " + effectiveCharset.displayName() + ")" :
+                    " (" + effectiveCharset.displayName() + ")";
+            }
             updateStatus("Tracking: " + file.getFileName() + serverInfo + charsetInfo);
         } catch (IOException e) {
             // If we can't read the file properly (e.g., encoding issues), 
