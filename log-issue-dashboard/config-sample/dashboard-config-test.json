@@ -1,0 +1,39 @@
+{
+  "servers": [
+    {
+      "serverName": "APP-SERVER",
+      "path": "sample-logs",
+      "description": "Application Server logs (sample)"
+    }
+  ],
+  "watchPaths": [
+    "sample-logs"
+  ],
+  "filePatterns": [
+    "*.log",
+    "*.txt",
+    "*.out"
+  ],
+  "exceptionPatterns": [
+    ".*Exception.*",
+    ".*Error:.*",
+    ".*at\\s+[\\w.$]+\\([^)]+\\).*",
+    ".*Caused by:.*",
+    ".*FATAL.*",
+    ".*Throwable.*"
+  ],
+  "errorPatterns": [
+    ".*\\bERROR\\b.*",
+    ".*\\bFAILED\\b.*",
+    ".*\\bFAILURE\\b.*"
+  ],
+  "warningPatterns": [
+    ".*\\bWARN\\b.*",
+    ".*\\bWARNING\\b.*"
+  ],
+  "pollingIntervalSeconds": 2,
+  "maxIssuesDisplayed": 500,
+  "enableSound": false,
+  "windowTitle": "Log Issue Dashboard - TEST MODE",
+  "webServerPort": 8080
+}
