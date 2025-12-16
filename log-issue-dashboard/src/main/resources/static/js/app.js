@@ -10,7 +10,15 @@ class LogDashboard {
         this.selectedIssue = null;
         this.filters = {
             severity: '',
-            server: ''
+            server: '',
+            dateFrom: '',
+            dateTo: ''
+        };
+        this.pagination = {
+            offset: 0,
+            limit: 50,
+            total: 0,
+            totalFiltered: 0
         };
         
         this.init();
@@ -55,8 +63,34 @@ class LogDashboard {
         document.getElementById('themeToggle').addEventListener('click', () => this.toggleTheme());
         document.getElementById('refreshBtn').addEventListener('click', () => this.refresh());
         document.getElementById('clearBtn').addEventListener('click', () => this.clearAll());
+        
+        // Filter listeners
         document.getElementById('severityFilter').addEventListener('change', (e) => this.filterBySeverity(e.target.value));
         document.getElementById('serverFilter').addEventListener('change', (e) => this.filterByServer(e.target.value));
+        document.getElementById('dateFromFilter').addEventListener('change', (e) => this.filterByDateFrom(e.target.value));
+        document.getElementById('dateToFilter').addEventListener('change', (e) => this.filterByDateTo(e.target.value));
+        
+        // Quick date filters
+        document.getElementById('quickFilterToday').addEventListener('click', () => this.setQuickDateFilter('today'));
+        document.getElementById('quickFilter7d').addEventListener('click', () => this.setQuickDateFilter('7d'));
+        document.getElementById('quickFilter30d').addEventListener('click', () => this.setQuickDateFilter('30d'));
+        document.getElementById('clearFilters').addEventListener('click', () => this.clearFilters());
+        
+        // Pagination
+        document.getElementById('prevPage').addEventListener('click', () => this.goToPage('prev'));
+        document.getElementById('nextPage').addEventListener('click', () => this.goToPage('next'));
+        document.getElementById('pageSize').addEventListener('change', (e) => this.changePageSize(parseInt(e.target.value)));
+        
+        // Export
+        document.getElementById('exportBtn').addEventListener('click', () => this.showExportModal());
+        document.getElementById('exportModalClose').addEventListener('click', () => this.closeExportModal());
+        document.getElementById('exportCancelBtn').addEventListener('click', () => this.closeExportModal());
+        document.getElementById('exportConfirmBtn').addEventListener('click', () => this.exportIssues());
+        document.getElementById('exportModal').addEventListener('click', (e) => {
+            if (e.target.id === 'exportModal') this.closeExportModal();
+        });
+        
+        // Issue modal
         document.getElementById('modalClose').addEventListener('click', () => this.closeModal());
         document.getElementById('acknowledgeBtn').addEventListener('click', () => this.acknowledgeIssue());
         document.getElementById('copyStackTrace').addEventListener('click', () => this.copyStackTrace());
@@ -68,7 +102,10 @@ class LogDashboard {
         
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') this.closeModal();
+            if (e.key === 'Escape') {
+                this.closeModal();
+                this.closeExportModal();
+            }
         });
     }
     
@@ -149,7 +186,8 @@ class LogDashboard {
                 this.loadStats(),
                 this.loadAnalysis(),
                 this.loadAnomalies(),
-                this.loadServers()
+                this.loadServers(),
+                this.loadDateRange()
             ]);
         } catch (error) {
             console.error('Error loading initial data:', error);
@@ -158,13 +196,69 @@ class LogDashboard {
     
     async loadIssues() {
         try {
-            const response = await fetch('/api/issues?limit=100');
+            const params = new URLSearchParams({
+                offset: this.pagination.offset,
+                limit: this.pagination.limit
+            });
+            
+            if (this.filters.severity) params.append('severity', this.filters.severity);
+            if (this.filters.server) params.append('server', this.filters.server);
+            if (this.filters.dateFrom) params.append('from', this.filters.dateFrom);
+            if (this.filters.dateTo) params.append('to', this.filters.dateTo);
+            
+            const response = await fetch(`/api/issues?${params}`);
             const data = await response.json();
+            
             this.issues = data.issues || [];
+            this.pagination.total = data.total || 0;
+            this.pagination.totalFiltered = data.totalFiltered || 0;
+            
             this.renderIssues();
+            this.updatePagination(data);
+            this.updateIssueCount();
         } catch (error) {
             console.error('Error loading issues:', error);
         }
+    }
+    
+    updateIssueCount() {
+        const countEl = document.getElementById('issueCount');
+        if (this.filters.severity || this.filters.server || this.filters.dateFrom || this.filters.dateTo) {
+            countEl.textContent = `(${this.pagination.totalFiltered} of ${this.pagination.total} issues)`;
+        } else {
+            countEl.textContent = `(${this.pagination.total} issues)`;
+        }
+    }
+    
+    updatePagination(data) {
+        const start = this.pagination.offset + 1;
+        const end = Math.min(this.pagination.offset + this.issues.length, this.pagination.totalFiltered);
+        const total = this.pagination.totalFiltered;
+        
+        document.getElementById('paginationInfo').textContent = 
+            total > 0 ? `Showing ${start}-${end} of ${total}` : 'No issues found';
+        
+        const currentPage = Math.floor(this.pagination.offset / this.pagination.limit) + 1;
+        const totalPages = Math.ceil(total / this.pagination.limit);
+        document.getElementById('pageNumber').textContent = `${currentPage} / ${totalPages || 1}`;
+        
+        document.getElementById('prevPage').disabled = this.pagination.offset === 0;
+        document.getElementById('nextPage').disabled = !data.hasMore;
+    }
+    
+    goToPage(direction) {
+        if (direction === 'prev' && this.pagination.offset > 0) {
+            this.pagination.offset = Math.max(0, this.pagination.offset - this.pagination.limit);
+        } else if (direction === 'next') {
+            this.pagination.offset += this.pagination.limit;
+        }
+        this.loadIssues();
+    }
+    
+    changePageSize(size) {
+        this.pagination.limit = size;
+        this.pagination.offset = 0;
+        this.loadIssues();
     }
     
     async loadStats() {
@@ -208,14 +302,36 @@ class LogDashboard {
         }
     }
     
+    async loadDateRange() {
+        try {
+            const response = await fetch('/api/daterange');
+            const data = await response.json();
+            
+            // Set date picker constraints based on available data
+            const fromInput = document.getElementById('dateFromFilter');
+            const toInput = document.getElementById('dateToFilter');
+            
+            if (data.earliest) {
+                fromInput.min = data.earliest;
+                toInput.min = data.earliest;
+            }
+            if (data.latest) {
+                fromInput.max = data.latest;
+                toInput.max = data.latest;
+            }
+        } catch (error) {
+            console.error('Error loading date range:', error);
+        }
+    }
+    
     // Issue handling
     addIssue(issue, isNew = false) {
-        // Add to beginning of list
+        // Add to beginning of current view
         this.issues.unshift(issue);
         
-        // Limit issues
-        if (this.issues.length > 500) {
-            this.issues = this.issues.slice(0, 500);
+        // Limit issues in view
+        if (this.issues.length > this.pagination.limit) {
+            this.issues = this.issues.slice(0, this.pagination.limit);
         }
         
         // Re-render or add single item
@@ -227,6 +343,25 @@ class LogDashboard {
     }
     
     prependIssueElement(issue) {
+        // Check if it matches current filters
+        if (this.filters.severity && issue.severity !== this.filters.severity) return;
+        if (this.filters.server && issue.serverName !== this.filters.server) return;
+        
+        // Check date filters
+        if (this.filters.dateFrom || this.filters.dateTo) {
+            const issueDate = new Date(issue.detectedAt);
+            if (this.filters.dateFrom) {
+                const fromDate = new Date(this.filters.dateFrom);
+                fromDate.setHours(0, 0, 0, 0);
+                if (issueDate < fromDate) return;
+            }
+            if (this.filters.dateTo) {
+                const toDate = new Date(this.filters.dateTo);
+                toDate.setHours(23, 59, 59, 999);
+                if (issueDate > toDate) return;
+            }
+        }
+        
         const list = document.getElementById('issuesList');
         
         // Remove empty state if present
@@ -235,13 +370,14 @@ class LogDashboard {
             emptyState.remove();
         }
         
-        // Check if it matches current filter
-        if (this.filters.severity && issue.severity !== this.filters.severity) return;
-        if (this.filters.server && issue.serverName !== this.filters.server) return;
-        
         const el = this.createIssueElement(issue);
         el.classList.add('new');
         list.insertBefore(el, list.firstChild);
+        
+        // Update counts
+        this.pagination.total++;
+        this.pagination.totalFiltered++;
+        this.updateIssueCount();
         
         // Remove animation class after animation completes
         setTimeout(() => el.classList.remove('new'), 300);
@@ -250,22 +386,17 @@ class LogDashboard {
     renderIssues() {
         const list = document.getElementById('issuesList');
         
-        let filtered = this.issues;
-        
-        if (this.filters.severity) {
-            filtered = filtered.filter(i => i.severity === this.filters.severity);
-        }
-        
-        if (this.filters.server) {
-            filtered = filtered.filter(i => i.serverName === this.filters.server);
-        }
+        // Issues are now pre-filtered from the API
+        const filtered = this.issues;
         
         if (filtered.length === 0) {
+            const hasFilters = this.filters.severity || this.filters.server || 
+                              this.filters.dateFrom || this.filters.dateTo;
             list.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-icon">🔍</div>
-                    <p>No issues detected yet</p>
-                    <p class="empty-hint">Issues will appear here in real-time</p>
+                    <div class="empty-icon">${hasFilters ? '🔍' : '📋'}</div>
+                    <p>${hasFilters ? 'No issues match your filters' : 'No issues detected yet'}</p>
+                    <p class="empty-hint">${hasFilters ? 'Try adjusting your filter criteria' : 'Issues will appear here in real-time'}</p>
                 </div>
             `;
             return;
@@ -482,12 +613,74 @@ class LogDashboard {
     // Filters
     filterBySeverity(severity) {
         this.filters.severity = severity;
-        this.renderIssues();
+        this.pagination.offset = 0;
+        this.loadIssues();
     }
     
     filterByServer(server) {
         this.filters.server = server;
-        this.renderIssues();
+        this.pagination.offset = 0;
+        this.loadIssues();
+    }
+    
+    filterByDateFrom(date) {
+        this.filters.dateFrom = date;
+        this.pagination.offset = 0;
+        this.loadIssues();
+    }
+    
+    filterByDateTo(date) {
+        this.filters.dateTo = date;
+        this.pagination.offset = 0;
+        this.loadIssues();
+    }
+    
+    setQuickDateFilter(preset) {
+        const today = new Date();
+        const toDate = today.toISOString().split('T')[0];
+        let fromDate;
+        
+        switch (preset) {
+            case 'today':
+                fromDate = toDate;
+                break;
+            case '7d':
+                const week = new Date(today);
+                week.setDate(week.getDate() - 7);
+                fromDate = week.toISOString().split('T')[0];
+                break;
+            case '30d':
+                const month = new Date(today);
+                month.setDate(month.getDate() - 30);
+                fromDate = month.toISOString().split('T')[0];
+                break;
+            default:
+                return;
+        }
+        
+        document.getElementById('dateFromFilter').value = fromDate;
+        document.getElementById('dateToFilter').value = toDate;
+        this.filters.dateFrom = fromDate;
+        this.filters.dateTo = toDate;
+        this.pagination.offset = 0;
+        this.loadIssues();
+    }
+    
+    clearFilters() {
+        this.filters = {
+            severity: '',
+            server: '',
+            dateFrom: '',
+            dateTo: ''
+        };
+        
+        document.getElementById('severityFilter').value = '';
+        document.getElementById('serverFilter').value = '';
+        document.getElementById('dateFromFilter').value = '';
+        document.getElementById('dateToFilter').value = '';
+        
+        this.pagination.offset = 0;
+        this.loadIssues();
     }
     
     updateServerFilter(servers) {
@@ -498,6 +691,38 @@ class LogDashboard {
             servers.map(s => `<option value="${this.escapeHtml(s.name)}">${this.escapeHtml(s.name)} (${s.issueCount})</option>`).join('');
         
         select.value = current;
+    }
+    
+    // Export functionality
+    showExportModal() {
+        document.getElementById('exportCount').textContent = this.pagination.totalFiltered;
+        document.getElementById('exportModal').classList.add('active');
+    }
+    
+    closeExportModal() {
+        document.getElementById('exportModal').classList.remove('active');
+    }
+    
+    exportIssues() {
+        const format = document.querySelector('input[name="exportFormat"]:checked').value;
+        
+        const params = new URLSearchParams({ format });
+        if (this.filters.severity) params.append('severity', this.filters.severity);
+        if (this.filters.server) params.append('server', this.filters.server);
+        if (this.filters.dateFrom) params.append('from', this.filters.dateFrom);
+        if (this.filters.dateTo) params.append('to', this.filters.dateTo);
+        
+        const url = `/api/export?${params}`;
+        
+        // Create download link
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `log-issues-export.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        this.closeExportModal();
     }
     
     // Charts

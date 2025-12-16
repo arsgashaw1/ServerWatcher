@@ -87,20 +87,64 @@
             <section class="issues-panel">
                 <div class="panel-header">
                     <h2>Live Issues</h2>
-                    <div class="panel-actions">
-                        <select id="severityFilter" class="filter-select">
-                            <option value="">All Severities</option>
-                            <option value="CRITICAL">Critical</option>
-                            <option value="EXCEPTION">Exception</option>
-                            <option value="ERROR">Error</option>
-                            <option value="WARNING">Warning</option>
-                        </select>
-                        <select id="serverFilter" class="filter-select">
-                            <option value="">All Servers</option>
-                        </select>
-                        <button class="btn btn-secondary btn-sm" id="clearBtn">Clear All</button>
+                    <span class="issue-count" id="issueCount">(0 issues)</span>
+                </div>
+                
+                <!-- Filter Bar -->
+                <div class="filter-bar">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label for="severityFilter">Severity</label>
+                            <select id="severityFilter" class="filter-select">
+                                <option value="">All</option>
+                                <option value="CRITICAL">🔴 Critical</option>
+                                <option value="EXCEPTION">❌ Exception</option>
+                                <option value="ERROR">⚠️ Error</option>
+                                <option value="WARNING">⚡ Warning</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="serverFilter">Server</label>
+                            <select id="serverFilter" class="filter-select">
+                                <option value="">All Servers</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="dateFromFilter">From</label>
+                            <input type="date" id="dateFromFilter" class="filter-input">
+                        </div>
+                        <div class="filter-group">
+                            <label for="dateToFilter">To</label>
+                            <input type="date" id="dateToFilter" class="filter-input">
+                        </div>
+                    </div>
+                    <div class="filter-actions">
+                        <button class="btn btn-sm btn-secondary" id="quickFilterToday" title="Today">Today</button>
+                        <button class="btn btn-sm btn-secondary" id="quickFilter7d" title="Last 7 Days">7d</button>
+                        <button class="btn btn-sm btn-secondary" id="quickFilter30d" title="Last 30 Days">30d</button>
+                        <button class="btn btn-sm btn-secondary" id="clearFilters" title="Clear Filters">Clear</button>
+                        <div class="filter-spacer"></div>
+                        <button class="btn btn-sm btn-secondary" id="exportBtn" title="Export Issues">📥 Export</button>
+                        <button class="btn btn-sm btn-secondary" id="clearBtn" title="Clear All Issues">🗑️ Clear All</button>
                     </div>
                 </div>
+                
+                <!-- Pagination Info -->
+                <div class="pagination-bar" id="paginationBar">
+                    <span class="pagination-info" id="paginationInfo">Showing 0-0 of 0</span>
+                    <div class="pagination-controls">
+                        <button class="btn btn-sm btn-icon" id="prevPage" disabled>◀</button>
+                        <span class="page-number" id="pageNumber">1</span>
+                        <button class="btn btn-sm btn-icon" id="nextPage" disabled>▶</button>
+                    </div>
+                    <select id="pageSize" class="filter-select page-size-select">
+                        <option value="25">25 per page</option>
+                        <option value="50" selected>50 per page</option>
+                        <option value="100">100 per page</option>
+                        <option value="200">200 per page</option>
+                    </select>
+                </div>
+                
                 <div class="issues-list" id="issuesList">
                     <div class="empty-state">
                         <div class="empty-icon">🔍</div>
@@ -179,6 +223,41 @@
                 <div class="modal-footer">
                     <button class="btn btn-secondary" id="acknowledgeBtn">Acknowledge</button>
                     <button class="btn btn-primary" id="copyStackTrace">Copy Stack Trace</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Export Modal -->
+        <div class="modal" id="exportModal">
+            <div class="modal-content modal-sm">
+                <div class="modal-header">
+                    <h2>Export Issues</h2>
+                    <button class="modal-close" id="exportModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="export-info">Export <strong id="exportCount">0</strong> issues with current filters applied.</p>
+                    <div class="export-options">
+                        <div class="export-option">
+                            <input type="radio" id="exportJson" name="exportFormat" value="json" checked>
+                            <label for="exportJson">
+                                <span class="export-format-icon">📄</span>
+                                <span class="export-format-name">JSON</span>
+                                <span class="export-format-desc">Machine-readable format</span>
+                            </label>
+                        </div>
+                        <div class="export-option">
+                            <input type="radio" id="exportCsv" name="exportFormat" value="csv">
+                            <label for="exportCsv">
+                                <span class="export-format-icon">📊</span>
+                                <span class="export-format-name">CSV</span>
+                                <span class="export-format-desc">Spreadsheet compatible</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="exportCancelBtn">Cancel</button>
+                    <button class="btn btn-primary" id="exportConfirmBtn">📥 Download</button>
                 </div>
             </div>
         </div>
