@@ -374,10 +374,18 @@ public class ApiServlet extends HttpServlet {
             
             out.write(GSON.toJson(results));
         } else {
-            // Detect encoding for specific file
-            Path path = Paths.get(filePath);
+            // Detect encoding for specific file - with path validation to prevent traversal attacks
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("path", filePath);
+            
+            // Validate that the requested path is within configured server paths
+            if (!isPathWithinConfiguredServers(filePath)) {
+                result.put("error", "Access denied: path must be within a configured server path");
+                out.write(GSON.toJson(result));
+                return;
+            }
+            
+            Path path = Paths.get(filePath);
             
             if (!Files.exists(path)) {
                 result.put("error", "File does not exist");
@@ -389,6 +397,43 @@ public class ApiServlet extends HttpServlet {
             
             out.write(GSON.toJson(result));
         }
+    }
+    
+    /**
+     * Validates that a given file path is within one of the configured server paths.
+     * This prevents path traversal attacks by ensuring only files within allowed directories
+     * can be accessed.
+     * 
+     * @param filePath The file path to validate
+     * @return true if the path is within a configured server path, false otherwise
+     */
+    private boolean isPathWithinConfiguredServers(String filePath) {
+        if (config == null || config.getServers() == null || config.getServers().isEmpty()) {
+            return false;
+        }
+        
+        try {
+            // Normalize the requested path to resolve any ".." or "." components
+            Path requestedPath = Paths.get(filePath).toAbsolutePath().normalize();
+            
+            for (ServerPath server : config.getServers()) {
+                if (server.getPath() == null || server.getPath().isEmpty()) {
+                    continue;
+                }
+                
+                Path serverPath = Paths.get(server.getPath()).toAbsolutePath().normalize();
+                
+                // Check if the requested path starts with the server path
+                if (requestedPath.startsWith(serverPath)) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            // Invalid path or other error - deny access
+            return false;
+        }
+        
+        return false;
     }
     
     private void addEncodingDetection(Map<String, Object> result, Path file) {
