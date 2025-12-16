@@ -26,13 +26,24 @@ A modern web-based dashboard for real-time log file monitoring with analysis fea
 - **Anomaly Detection**: Alerts for spikes, new exception types, and server concentration
 - **Root Cause Candidates**: Identifies potential hotspots in your code
 
+### Advanced Filtering & Export
+- **Date Range Filtering**: Filter issues by date range to manage growing logs
+- **Server Filtering**: View issues from specific servers only
+- **Combined Filters**: Apply multiple filters simultaneously (date + server + severity)
+- **Pagination**: Navigate through large result sets efficiently
+- **Export**: Download filtered issues as JSON or CSV
+
 ### REST API
 Full API access for integration with other tools:
 - `GET /api/issues` - List all issues with pagination and filtering
+- `GET /api/issues?from=2024-01-01&to=2024-01-31` - Filter by date range
+- `GET /api/issues?server=Production&severity=ERROR` - Filter by server and severity
 - `GET /api/issues/recent` - Get issues from the last N minutes
 - `GET /api/stats/dashboard` - Comprehensive dashboard statistics
 - `GET /api/analysis` - Detailed analysis report
 - `GET /api/analysis/anomalies` - Detected anomalies
+- `GET /api/daterange` - Get available date range for filtering
+- `GET /api/export?format=csv` - Export filtered issues as CSV
 - `POST /api/issues/{id}/acknowledge` - Acknowledge an issue
 - `POST /api/issues/clear` - Clear all issues
 
@@ -127,6 +138,12 @@ java -jar log-issue-dashboard.jar ./config 9090
       "serverName": "ServerName",
       "path": "/path/to/logs",
       "description": "Optional description"
+    },
+    {
+      "serverName": "MainframeServer",
+      "path": "/mainframe/logs",
+      "description": "IBM Mainframe logs",
+      "encoding": "EBCDIC"
     }
   ],
   "watchPaths": ["/legacy/path/support"],
@@ -156,7 +173,7 @@ java -jar log-issue-dashboard.jar ./config 9090
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `servers` | array | `[]` | List of server configurations with name, path, and description |
+| `servers` | array | `[]` | List of server configurations with name, path, description, and encoding |
 | `watchPaths` | array | `[]` | Legacy: simple paths without server names |
 | `filePatterns` | array | `["*.log", "*.txt", "*.out"]` | Glob patterns for log files to watch |
 | `exceptionPatterns` | array | (see above) | Regex patterns to detect exceptions |
@@ -165,6 +182,59 @@ java -jar log-issue-dashboard.jar ./config 9090
 | `pollingIntervalSeconds` | int | `2` | How often to check for file changes |
 | `maxIssuesDisplayed` | int | `500` | Maximum issues to keep in memory |
 | `webServerPort` | int | `8080` | HTTP server port |
+
+### Server Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `serverName` | string | required | Display name for the server |
+| `path` | string | required | Path to log directory or file |
+| `description` | string | `null` | Optional description |
+| `encoding` | string | `UTF-8` | Character encoding for log files |
+
+### EBCDIC and Character Encoding Support
+
+The dashboard supports various character encodings for log files, including EBCDIC used on IBM mainframes.
+
+#### Supported Encoding Aliases
+
+| Alias | Java Charset | Description |
+|-------|--------------|-------------|
+| `EBCDIC` | Cp037 | US/Canada EBCDIC |
+| `EBCDIC-US` | Cp037 | US/Canada EBCDIC |
+| `EBCDIC-INTL` | Cp500 | International EBCDIC |
+| `EBCDIC-UNIX` | Cp1047 | Unix/z/OS Open Systems |
+| `EBCDIC-1047` | Cp1047 | Unix/z/OS Open Systems |
+| `EBCDIC-LATIN1` | Cp1148 | Latin-1 with Euro sign |
+| `Cp037` | Cp037 | IBM EBCDIC US/Canada |
+| `Cp500` | Cp500 | IBM EBCDIC International |
+| `Cp1047` | Cp1047 | IBM EBCDIC z/OS Unix |
+
+#### EBCDIC Configuration Examples
+
+```json
+{
+  "servers": [
+    {
+      "serverName": "z/OS-Production",
+      "path": "/zos/prod/logs",
+      "description": "z/OS Production logs",
+      "encoding": "EBCDIC-UNIX"
+    },
+    {
+      "serverName": "AS400-Server",
+      "path": "/as400/logs",
+      "description": "IBM AS/400 logs",
+      "encoding": "Cp037"
+    },
+    {
+      "serverName": "Linux-Server",
+      "path": "/var/log/app",
+      "description": "Standard Linux logs (UTF-8 default)"
+    }
+  ]
+}
+```
 
 ## API Examples
 
@@ -196,6 +266,36 @@ curl "http://localhost:8080/api/issues?severity=EXCEPTION"
 
 ```bash
 curl "http://localhost:8080/api/issues?server=Production"
+```
+
+### Filter by Date Range
+
+```bash
+# Issues from the last 7 days
+curl "http://localhost:8080/api/issues?from=2024-01-01&to=2024-01-07"
+
+# Issues from today only
+curl "http://localhost:8080/api/issues?from=2024-01-15&to=2024-01-15"
+```
+
+### Combined Filters
+
+```bash
+# Critical errors on Production server in the last week
+curl "http://localhost:8080/api/issues?server=Production&severity=CRITICAL&from=2024-01-08&to=2024-01-15"
+```
+
+### Export Issues
+
+```bash
+# Export as JSON
+curl "http://localhost:8080/api/export?format=json" > issues.json
+
+# Export as CSV
+curl "http://localhost:8080/api/export?format=csv" > issues.csv
+
+# Export filtered issues
+curl "http://localhost:8080/api/export?format=csv&server=Production&severity=ERROR" > production-errors.csv
 ```
 
 ### Acknowledge an Issue
