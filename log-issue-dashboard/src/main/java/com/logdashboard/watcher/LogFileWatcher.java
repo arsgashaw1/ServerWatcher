@@ -476,9 +476,19 @@ public class LogFileWatcher {
             
             if (currentSize > lastPosition) {
                 // File has grown - read new content
+                System.out.println("DEBUG: File changed: " + file.getFileName() + " (+" + (currentSize - lastPosition) + " bytes)");
+                System.out.println("DEBUG: iconvEncoding=" + iconvEncoding + ", useIconv=" + useIconv);
+                
                 List<String> newLines = readNewLines(file, lastPosition, charset, iconvEncoding, useIconv);
                 
+                System.out.println("DEBUG: Read " + newLines.size() + " new lines");
+                
                 if (!newLines.isEmpty()) {
+                    // Show first few lines for debugging
+                    for (int i = 0; i < Math.min(3, newLines.size()); i++) {
+                        System.out.println("DEBUG: Line " + (i+1) + ": " + newLines.get(i));
+                    }
+                    
                     List<LogIssue> issues = parser.parseLines(
                         serverName,
                         file.getFileName().toString(),
@@ -486,7 +496,10 @@ public class LogFileWatcher {
                         lastLineNumber + 1
                     );
                     
+                    System.out.println("DEBUG: Found " + issues.size() + " issues");
+                    
                     for (LogIssue issue : issues) {
+                        System.out.println("DEBUG: Issue - " + issue.getSeverity() + ": " + issue.getMessage());
                         issueCallback.accept(issue);
                     }
                     
