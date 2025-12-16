@@ -257,6 +257,32 @@ public class LogFileWatcher {
                 }
             }
             
+            // TODO: REMOVE - Debug log to see initial file content
+            try {
+                byte[] rawBytes = Files.readAllBytes(file);
+                String content;
+                boolean isEbcdic = IconvConverter.isEbcdicEncoding(effectiveIconvEncoding);
+                
+                if (isEbcdic && IconvConverter.isIconvAvailable()) {
+                    // EBCDIC: iconv -f IBM-1047 -t ISO8859-1
+                    content = IconvConverter.convertEbcdicToReadable(rawBytes, effectiveIconvEncoding);
+                } else if (StandardCharsets.ISO_8859_1.equals(effectiveCharset)) {
+                    // ISO8859-1: direct read
+                    content = new String(rawBytes, StandardCharsets.ISO_8859_1);
+                } else {
+                    // UTF-8: direct read
+                    content = new String(rawBytes, effectiveCharset);
+                }
+                
+                System.out.println("=== [" + file.getFileName() + "] ===");
+                System.out.println("Encoding: " + effectiveIconvEncoding + (isEbcdic ? " (EBCDIC -> ISO8859-1)" : ""));
+                System.out.println("Size: " + rawBytes.length + " bytes");
+                System.out.println("Content (first 1000 chars):");
+                System.out.println(content.length() > 1000 ? content.substring(0, 1000) + "..." : content);
+                System.out.println("=== END ===\n");
+            } catch (Exception e) {
+                System.out.println("Error reading " + file.getFileName() + ": " + e.getMessage());
+            }
             
             long size = Files.size(file);
             int lineCount = countLines(file, effectiveCharset, effectiveIconvEncoding, effectiveUseIconv);
