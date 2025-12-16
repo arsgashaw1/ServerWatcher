@@ -1,8 +1,10 @@
-# Log Issue Dashboard
+# Sentinel
 
-A modern web-based dashboard for real-time log file monitoring with analysis features. Built with embedded Tomcat and a beautiful, responsive UI.
+**Enterprise-grade log monitoring and anomaly detection platform.**
 
-![Dashboard Preview](docs/dashboard-preview.png)
+A modern web-based dashboard for real-time log file monitoring with advanced analysis features. Built with embedded Tomcat and a beautiful, responsive UI.
+
+![Sentinel Dashboard](docs/dashboard-preview.png)
 
 ## Features
 
@@ -396,7 +398,7 @@ eventSource.addEventListener('stats', (event) => {
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Log Issue Dashboard                       │
+│                        Sentinel                              │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │

@@ -54,6 +54,6 @@
   "pollingIntervalSeconds": 2,
   "maxIssuesDisplayed": 500,
   "enableSound": false,
-  "windowTitle": "Log Issue Dashboard",
+  "windowTitle": "Sentinel",
   "webServerPort": 8080
 }
