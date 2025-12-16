@@ -216,6 +216,38 @@ public class LogFileWatcher {
                 }
             }
             
+            // TODO: REMOVE - Temporary debug log to see file content on initial load
+            System.out.println("=== DEBUG: Initial file content ===");
+            System.out.println("File: " + file);
+            System.out.println("Server: " + serverName);
+            System.out.println("Charset: " + effectiveCharset + ", iconvEncoding: " + effectiveIconvEncoding + ", useIconv: " + effectiveUseIconv);
+            try {
+                byte[] rawBytes = Files.readAllBytes(file);
+                System.out.println("Total bytes in file: " + rawBytes.length);
+                
+                // Show first 500 bytes as hex
+                int previewLen = Math.min(rawBytes.length, 100);
+                StringBuilder hexPreview = new StringBuilder();
+                for (int i = 0; i < previewLen; i++) {
+                    hexPreview.append(String.format("%02X ", rawBytes[i] & 0xFF));
+                    if ((i + 1) % 20 == 0) hexPreview.append("\n");
+                }
+                System.out.println("Raw bytes (first 100):\n" + hexPreview);
+                
+                // Decode content
+                String content;
+                if (effectiveUseIconv && effectiveIconvEncoding != null && IconvConverter.isIconvAvailable()) {
+                    content = IconvConverter.convertToUtf8(rawBytes, effectiveIconvEncoding);
+                } else {
+                    content = new String(rawBytes, effectiveCharset);
+                }
+                System.out.println("Decoded content (first 1000 chars):");
+                System.out.println(content.length() > 1000 ? content.substring(0, 1000) + "..." : content);
+            } catch (Exception e) {
+                System.out.println("Error reading file for debug: " + e.getMessage());
+            }
+            System.out.println("=== END DEBUG ===\n");
+            
             long size = Files.size(file);
             int lineCount = countLines(file, effectiveCharset, effectiveIconvEncoding, effectiveUseIconv);
             filePositions.put(file, size);
