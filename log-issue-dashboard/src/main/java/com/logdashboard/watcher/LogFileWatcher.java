@@ -304,6 +304,9 @@ public class LogFileWatcher {
             }
             fileUseIconv.put(file, effectiveUseIconv);
             
+            // TODO: REMOVE - Debug stored values
+            System.out.println("STORED: " + file.getFileName() + " -> iconvEncoding=" + effectiveIconvEncoding + ", useIconv=" + effectiveUseIconv);
+            
             String serverInfo = serverName != null ? " [" + serverName + "]" : "";
             String charsetInfo = "";
             if (!StandardCharsets.UTF_8.equals(effectiveCharset)) {
@@ -473,6 +476,9 @@ public class LogFileWatcher {
             Charset charset = fileCharsets.getOrDefault(file, StandardCharsets.UTF_8);
             String iconvEncoding = fileIconvEncodings.get(file);
             boolean useIconv = fileUseIconv.getOrDefault(file, false);
+            
+            // TODO: REMOVE - Debug polling
+            System.out.println("POLL: " + file.getFileName() + " - currentSize=" + currentSize + ", lastPosition=" + lastPosition + ", diff=" + (currentSize - lastPosition));
             
             if (currentSize > lastPosition) {
                 // File has grown - read new content
