@@ -16,16 +16,31 @@ A Java application that watches log files for exceptions, errors, and warnings, 
 ## Requirements
 
 - Java 11 or higher
-- Maven 3.6+ (for building)
+- Gradle 8.5+ (or use the included Gradle wrapper)
 
 ## Building
 
 ```bash
 cd log-issue-dashboard
-mvn clean package
+./gradlew build
 ```
 
-This creates an executable JAR file: `target/log-issue-dashboard-1.0.0.jar`
+This creates:
+- A regular JAR file: `build/libs/log-issue-dashboard-1.0.0.jar`
+- A fat JAR with all dependencies: `build/libs/log-issue-dashboard-1.0.0-all.jar`
+
+### Other Gradle Tasks
+
+```bash
+# Clean build artifacts
+./gradlew clean
+
+# Run the application
+./gradlew run --args="<config-folder>"
+
+# Build only the fat JAR
+./gradlew fatJar
+```
 
 ## Usage
 
@@ -198,7 +213,12 @@ This application works well with USS (Unix System Services) paths on z/OS:
 
 ```
 log-issue-dashboard/
-├── pom.xml
+├── build.gradle.kts                  # Gradle build file
+├── settings.gradle.kts               # Gradle settings
+├── gradle.properties                 # Gradle properties
+├── gradlew                           # Gradle wrapper (Unix)
+├── gradlew.bat                       # Gradle wrapper (Windows)
+├── gradle/wrapper/                   # Gradle wrapper files
 ├── README.md
 ├── config-sample/
 │   └── dashboard-config.json
