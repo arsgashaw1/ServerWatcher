@@ -1,4 +1,5 @@
 /workspace/log-issue-dashboard/src/main/java/com/logdashboard/ui/DashboardFrame.java
+/workspace/log-issue-dashboard/src/main/java/com/logdashboard/config/ServerPath.java
 /workspace/log-issue-dashboard/src/main/java/com/logdashboard/LogDashboardApp.java
 /workspace/log-issue-dashboard/src/main/java/com/logdashboard/config/ConfigLoader.java
 /workspace/log-issue-dashboard/src/main/java/com/logdashboard/model/LogIssue.java

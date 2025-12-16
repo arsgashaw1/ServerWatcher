@@ -64,10 +64,24 @@ The application reads configuration from a `dashboard-config.json` file in the s
 
 ```json
 {
-  "watchPaths": [
-    "/path/to/your/logs",
-    "/another/log/directory"
+  "servers": [
+    {
+      "serverName": "U3172QA",
+      "path": "/a/b/c",
+      "description": "QA Server logs"
+    },
+    {
+      "serverName": "U3172PROD",
+      "path": "/u/prod/logs",
+      "description": "Production Server logs"
+    },
+    {
+      "serverName": "U3172DEV",
+      "path": "/u/dev/logs",
+      "description": "Development Server logs"
+    }
   ],
+  "watchPaths": [],
   "filePatterns": [
     "*.log",
     "*.txt",
@@ -101,7 +115,11 @@ The application reads configuration from a `dashboard-config.json` file in the s
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `watchPaths` | Array of strings | Directories or files to watch for changes |
+| `servers` | Array of objects | **Recommended:** Server-based paths with server names |
+| `servers[].serverName` | String | Name of the server (e.g., "U3172QA") |
+| `servers[].path` | String | USS path to watch on this server |
+| `servers[].description` | String | Optional description of the server |
+| `watchPaths` | Array of strings | Legacy: Simple paths without server names |
 | `filePatterns` | Array of strings | Glob patterns for files to monitor (e.g., `*.log`) |
 | `exceptionPatterns` | Array of strings | Regex patterns to detect exceptions |
 | `errorPatterns` | Array of strings | Regex patterns to detect errors |
@@ -110,6 +128,24 @@ The application reads configuration from a `dashboard-config.json` file in the s
 | `maxIssuesDisplayed` | Integer | Maximum number of issues to keep in memory |
 | `enableSound` | Boolean | Enable sound notifications (not yet implemented) |
 | `windowTitle` | String | Title of the dashboard window |
+
+### Server-Based Configuration
+
+The `servers` array is the recommended way to configure watched paths. Each entry associates a server name with a path:
+
+```json
+{
+  "servers": [
+    {
+      "serverName": "U3172QA",
+      "path": "/a/b/c",
+      "description": "QA Server logs"
+    }
+  ]
+}
+```
+
+The server name will be displayed in a dedicated column in the dashboard, making it easy to identify which server each issue came from. Each server is color-coded for quick visual identification.
 
 ## Dashboard Features
 

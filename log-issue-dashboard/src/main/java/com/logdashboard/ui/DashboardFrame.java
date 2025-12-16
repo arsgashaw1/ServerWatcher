@@ -13,6 +13,7 @@ import java.awt.*;
 import java.awt.event.*;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,7 +75,7 @@ public class DashboardFrame extends JFrame {
         splitPane.setResizeWeight(0.7);
         
         // Create table
-        String[] columns = {"Time", "Severity", "Type", "File", "Line", "Message"};
+        String[] columns = {"Time", "Server", "Severity", "Type", "File", "Line", "Message"};
         tableModel = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -89,15 +90,19 @@ public class DashboardFrame extends JFrame {
         issueTable.getTableHeader().setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
         
         // Set column widths
-        issueTable.getColumnModel().getColumn(0).setPreferredWidth(150);  // Time
-        issueTable.getColumnModel().getColumn(1).setPreferredWidth(80);   // Severity
-        issueTable.getColumnModel().getColumn(2).setPreferredWidth(120);  // Type
-        issueTable.getColumnModel().getColumn(3).setPreferredWidth(200);  // File
-        issueTable.getColumnModel().getColumn(4).setPreferredWidth(60);   // Line
-        issueTable.getColumnModel().getColumn(5).setPreferredWidth(500);  // Message
+        issueTable.getColumnModel().getColumn(0).setPreferredWidth(140);  // Time
+        issueTable.getColumnModel().getColumn(1).setPreferredWidth(100);  // Server
+        issueTable.getColumnModel().getColumn(2).setPreferredWidth(80);   // Severity
+        issueTable.getColumnModel().getColumn(3).setPreferredWidth(100);  // Type
+        issueTable.getColumnModel().getColumn(4).setPreferredWidth(150);  // File
+        issueTable.getColumnModel().getColumn(5).setPreferredWidth(50);   // Line
+        issueTable.getColumnModel().getColumn(6).setPreferredWidth(400);  // Message
         
         // Custom renderer for severity coloring
-        issueTable.getColumnModel().getColumn(1).setCellRenderer(new SeverityRenderer());
+        issueTable.getColumnModel().getColumn(2).setCellRenderer(new SeverityRenderer());
+        
+        // Custom renderer for server column
+        issueTable.getColumnModel().getColumn(1).setCellRenderer(new ServerRenderer());
         
         // Add row sorter
         sorter = new TableRowSorter<>(tableModel);
@@ -286,6 +291,7 @@ public class DashboardFrame extends JFrame {
     private void addIssueToTable(LogIssue issue) {
         Object[] row = {
             issue.getFormattedTime(),
+            issue.getServerName() != null ? issue.getServerName() : "-",
             issue.getSeverity().getDisplayName(),
             issue.getIssueType(),
             issue.getFileName(),
@@ -315,6 +321,9 @@ public class DashboardFrame extends JFrame {
             StringBuilder details = new StringBuilder();
             details.append("=== Issue Details ===\n\n");
             details.append("Time: ").append(issue.getFormattedTime()).append("\n");
+            if (issue.getServerName() != null) {
+                details.append("Server: ").append(issue.getServerName()).append("\n");
+            }
             details.append("File: ").append(issue.getFileName()).append("\n");
             details.append("Line: ").append(issue.getLineNumber()).append("\n");
             details.append("Type: ").append(issue.getIssueType()).append("\n");
@@ -368,7 +377,7 @@ public class DashboardFrame extends JFrame {
     private void applyFilters() {
         List<RowFilter<Object, Object>> filters = new ArrayList<>();
         
-        // Severity filters
+        // Severity filters (column index 2 now, since Server is column 1)
         List<String> allowedSeverities = new ArrayList<>();
         if (showErrors.isSelected()) allowedSeverities.add("Error");
         if (showWarnings.isSelected()) allowedSeverities.add("Warning");
@@ -378,7 +387,7 @@ public class DashboardFrame extends JFrame {
             RowFilter<Object, Object> severityFilter = new RowFilter<Object, Object>() {
                 @Override
                 public boolean include(Entry<?, ?> entry) {
-                    String severity = entry.getStringValue(1);
+                    String severity = entry.getStringValue(2);  // Column 2 is now Severity
                     return allowedSeverities.contains(severity);
                 }
             };
@@ -441,6 +450,49 @@ public class DashboardFrame extends JFrame {
             }
             
             setHorizontalAlignment(CENTER);
+            return c;
+        }
+    }
+    
+    /**
+     * Custom renderer for the server column with distinct colors.
+     */
+    private static class ServerRenderer extends DefaultTableCellRenderer {
+        private static final Color[] SERVER_COLORS = {
+            new Color(200, 220, 255),  // Light blue
+            new Color(200, 255, 200),  // Light green
+            new Color(255, 220, 200),  // Light orange
+            new Color(220, 200, 255),  // Light purple
+            new Color(255, 255, 200),  // Light yellow
+            new Color(200, 255, 255),  // Light cyan
+            new Color(255, 200, 255),  // Light magenta
+        };
+        
+        private final Map<String, Color> serverColorMap = new HashMap<>();
+        private int colorIndex = 0;
+        
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value,
+                boolean isSelected, boolean hasFocus, int row, int column) {
+            Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            
+            String serverName = (String) value;
+            
+            if (!isSelected && serverName != null && !"-".equals(serverName)) {
+                Color serverColor = serverColorMap.computeIfAbsent(serverName, k -> {
+                    Color color = SERVER_COLORS[colorIndex % SERVER_COLORS.length];
+                    colorIndex++;
+                    return color;
+                });
+                c.setBackground(serverColor);
+                c.setForeground(Color.BLACK);
+            } else if (!isSelected) {
+                c.setBackground(Color.WHITE);
+                c.setForeground(Color.GRAY);
+            }
+            
+            setHorizontalAlignment(CENTER);
+            setFont(getFont().deriveFont(Font.BOLD));
             return c;
         }
     }

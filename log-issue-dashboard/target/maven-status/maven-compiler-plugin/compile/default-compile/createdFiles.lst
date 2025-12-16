@@ -1,4 +1,5 @@
 com/logdashboard/config/ConfigLoader.class
+com/logdashboard/ui/DashboardFrame$ServerRenderer.class
 com/logdashboard/ui/DashboardFrame$SeverityRenderer.class
 com/logdashboard/ui/DashboardFrame$5.class
 com/logdashboard/parser/LogParser.class
@@ -7,6 +8,7 @@ com/logdashboard/ui/DashboardFrame$4.class
 com/logdashboard/watcher/LogFileWatcher.class
 com/logdashboard/ui/DashboardFrame$3.class
 com/logdashboard/LogDashboardApp.class
+com/logdashboard/config/ServerPath.class
 com/logdashboard/config/DashboardConfig.class
 com/logdashboard/ui/DashboardFrame$1.class
 com/logdashboard/ui/DashboardFrame$2.class

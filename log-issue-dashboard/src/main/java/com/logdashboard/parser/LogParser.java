@@ -47,7 +47,7 @@ public class LogParser {
     /**
      * Parses new lines from a log file and returns detected issues.
      */
-    public List<LogIssue> parseLines(String fileName, List<String> lines, int startLineNumber) {
+    public List<LogIssue> parseLines(String serverName, String fileName, List<String> lines, int startLineNumber) {
         List<LogIssue> issues = new ArrayList<>();
         
         int lineNum = startLineNumber;
@@ -72,6 +72,7 @@ public class LogParser {
                 String message = extractMessage(line);
                 
                 issues.add(new LogIssue(
+                    serverName,
                     fileName,
                     exceptionLineNum,
                     issueType,
@@ -89,6 +90,7 @@ public class LogParser {
             // Check for error patterns
             if (matchesAny(line, errorPatterns)) {
                 issues.add(new LogIssue(
+                    serverName,
                     fileName,
                     lineNum,
                     "ERROR",
@@ -100,6 +102,7 @@ public class LogParser {
             // Check for warning patterns
             else if (matchesAny(line, warningPatterns)) {
                 issues.add(new LogIssue(
+                    serverName,
                     fileName,
                     lineNum,
                     "WARNING",
@@ -114,6 +117,13 @@ public class LogParser {
         }
         
         return issues;
+    }
+    
+    /**
+     * Parses new lines from a log file without server name (backward compatible).
+     */
+    public List<LogIssue> parseLines(String fileName, List<String> lines, int startLineNumber) {
+        return parseLines(null, fileName, lines, startLineNumber);
     }
     
     private boolean matchesAny(String line, List<Pattern> patterns) {

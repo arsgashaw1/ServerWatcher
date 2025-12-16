@@ -1,8 +1,22 @@
 {
-  "watchPaths": [
-    "/path/to/your/logs",
-    "/another/log/directory"
+  "servers": [
+    {
+      "serverName": "U3172QA",
+      "path": "/a/b/c",
+      "description": "QA Server logs"
+    },
+    {
+      "serverName": "U3172PROD",
+      "path": "/u/prod/logs",
+      "description": "Production Server logs"
+    },
+    {
+      "serverName": "U3172DEV",
+      "path": "/u/dev/logs",
+      "description": "Development Server logs"
+    }
   ],
+  "watchPaths": [],
   "filePatterns": [
     "*.log",
     "*.txt",

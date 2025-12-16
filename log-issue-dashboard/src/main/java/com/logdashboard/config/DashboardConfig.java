@@ -9,7 +9,8 @@ import java.util.List;
  */
 public class DashboardConfig {
     
-    private List<String> watchPaths;
+    private List<String> watchPaths;  // Legacy: simple paths without server names
+    private List<ServerPath> servers; // New: server-based paths
     private List<String> filePatterns;
     private List<String> exceptionPatterns;
     private List<String> errorPatterns;
@@ -22,6 +23,7 @@ public class DashboardConfig {
     public DashboardConfig() {
         // Default configuration
         this.watchPaths = new ArrayList<>();
+        this.servers = new ArrayList<>();
         this.filePatterns = Arrays.asList("*.log", "*.txt", "*.out");
         this.exceptionPatterns = Arrays.asList(
             ".*Exception.*",
@@ -52,6 +54,14 @@ public class DashboardConfig {
 
     public void setWatchPaths(List<String> watchPaths) {
         this.watchPaths = watchPaths;
+    }
+
+    public List<ServerPath> getServers() {
+        return servers;
+    }
+
+    public void setServers(List<ServerPath> servers) {
+        this.servers = servers;
     }
 
     public List<String> getFilePatterns() {

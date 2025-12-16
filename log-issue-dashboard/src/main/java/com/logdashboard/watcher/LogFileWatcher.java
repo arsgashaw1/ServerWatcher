@@ -1,6 +1,7 @@
 package com.logdashboard.watcher;
 
 import com.logdashboard.config.DashboardConfig;
+import com.logdashboard.config.ServerPath;
 import com.logdashboard.model.LogIssue;
 import com.logdashboard.parser.LogParser;
 
@@ -23,6 +24,7 @@ public class LogFileWatcher {
     
     private final Map<Path, Long> filePositions;
     private final Map<Path, Integer> fileLineNumbers;
+    private final Map<Path, String> fileServerNames;  // Maps file path to server name
     private final ScheduledExecutorService scheduler;
     private final List<Pattern> filePatterns;
     
@@ -36,6 +38,7 @@ public class LogFileWatcher {
         this.statusCallback = statusCallback;
         this.filePositions = new ConcurrentHashMap<>();
         this.fileLineNumbers = new ConcurrentHashMap<>();
+        this.fileServerNames = new ConcurrentHashMap<>();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "LogFileWatcher");
             t.setDaemon(true);
@@ -79,7 +82,19 @@ public class LogFileWatcher {
             TimeUnit.SECONDS
         );
         
-        updateStatus("Watching " + config.getWatchPaths().size() + " path(s)");
+        int totalPaths = getTotalWatchPaths();
+        updateStatus("Watching " + totalPaths + " path(s)");
+    }
+    
+    private int getTotalWatchPaths() {
+        int count = 0;
+        if (config.getWatchPaths() != null) {
+            count += config.getWatchPaths().size();
+        }
+        if (config.getServers() != null) {
+            count += config.getServers().size();
+        }
+        return count;
     }
     
     /**
@@ -100,43 +115,65 @@ public class LogFileWatcher {
      * Performs initial scan of all watched directories.
      */
     private void initialScan() {
-        for (String pathStr : config.getWatchPaths()) {
-            Path watchPath = Paths.get(pathStr);
-            
-            if (!Files.exists(watchPath)) {
-                updateStatus("Warning: Watch path does not exist: " + pathStr);
-                continue;
+        // Scan legacy watch paths (no server name)
+        if (config.getWatchPaths() != null) {
+            for (String pathStr : config.getWatchPaths()) {
+                scanPath(pathStr, null);
             }
-            
-            try {
-                if (Files.isDirectory(watchPath)) {
-                    // Scan directory for matching files
-                    try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
-                        for (Path file : stream) {
-                            if (Files.isRegularFile(file) && matchesFilePattern(file)) {
-                                initializeFile(file);
-                            }
+        }
+        
+        // Scan server-based paths
+        if (config.getServers() != null) {
+            for (ServerPath server : config.getServers()) {
+                String serverName = server.getServerName();
+                String pathStr = server.getPath();
+                updateStatus("Scanning server: " + serverName + " -> " + pathStr);
+                scanPath(pathStr, serverName);
+            }
+        }
+    }
+    
+    private void scanPath(String pathStr, String serverName) {
+        Path watchPath = Paths.get(pathStr);
+        
+        if (!Files.exists(watchPath)) {
+            String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+            updateStatus("Warning: Watch path does not exist: " + pathStr + serverInfo);
+            return;
+        }
+        
+        try {
+            if (Files.isDirectory(watchPath)) {
+                // Scan directory for matching files
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
+                    for (Path file : stream) {
+                        if (Files.isRegularFile(file) && matchesFilePattern(file)) {
+                            initializeFile(file, serverName);
                         }
                     }
-                } else if (Files.isRegularFile(watchPath)) {
-                    initializeFile(watchPath);
                 }
-            } catch (IOException e) {
-                updateStatus("Error scanning path: " + pathStr + " - " + e.getMessage());
+            } else if (Files.isRegularFile(watchPath)) {
+                initializeFile(watchPath, serverName);
             }
+        } catch (IOException e) {
+            updateStatus("Error scanning path: " + pathStr + " - " + e.getMessage());
         }
     }
     
     /**
      * Initializes tracking for a file (sets position to end of file).
      */
-    private void initializeFile(Path file) {
+    private void initializeFile(Path file, String serverName) {
         try {
             long size = Files.size(file);
             int lineCount = countLines(file);
             filePositions.put(file, size);
             fileLineNumbers.put(file, lineCount);
-            updateStatus("Tracking: " + file.getFileName());
+            if (serverName != null) {
+                fileServerNames.put(file, serverName);
+            }
+            String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+            updateStatus("Tracking: " + file.getFileName() + serverInfo);
         } catch (IOException e) {
             updateStatus("Error initializing file: " + file + " - " + e.getMessage());
         }
@@ -165,34 +202,55 @@ public class LogFileWatcher {
         
         Set<Path> currentFiles = new HashSet<>();
         
-        for (String pathStr : config.getWatchPaths()) {
-            Path watchPath = Paths.get(pathStr);
-            
-            try {
-                if (Files.isDirectory(watchPath)) {
-                    try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
-                        for (Path file : stream) {
-                            if (Files.isRegularFile(file) && matchesFilePattern(file)) {
-                                currentFiles.add(file);
-                                checkFileForChanges(file);
-                            }
-                        }
-                    }
-                } else if (Files.isRegularFile(watchPath) && matchesFilePattern(watchPath)) {
-                    currentFiles.add(watchPath);
-                    checkFileForChanges(watchPath);
-                }
-            } catch (IOException e) {
-                // Log error but continue
-                System.err.println("Error polling: " + pathStr + " - " + e.getMessage());
+        // Poll legacy watch paths
+        if (config.getWatchPaths() != null) {
+            for (String pathStr : config.getWatchPaths()) {
+                pollPath(pathStr, null, currentFiles);
+            }
+        }
+        
+        // Poll server-based paths
+        if (config.getServers() != null) {
+            for (ServerPath server : config.getServers()) {
+                pollPath(server.getPath(), server.getServerName(), currentFiles);
             }
         }
         
         // Check for new files
         for (Path file : currentFiles) {
             if (!filePositions.containsKey(file)) {
-                initializeFile(file);
+                String serverName = fileServerNames.get(file);
+                initializeFile(file, serverName);
             }
+        }
+    }
+    
+    private void pollPath(String pathStr, String serverName, Set<Path> currentFiles) {
+        Path watchPath = Paths.get(pathStr);
+        
+        try {
+            if (Files.isDirectory(watchPath)) {
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
+                    for (Path file : stream) {
+                        if (Files.isRegularFile(file) && matchesFilePattern(file)) {
+                            currentFiles.add(file);
+                            if (serverName != null && !fileServerNames.containsKey(file)) {
+                                fileServerNames.put(file, serverName);
+                            }
+                            checkFileForChanges(file);
+                        }
+                    }
+                }
+            } else if (Files.isRegularFile(watchPath) && matchesFilePattern(watchPath)) {
+                currentFiles.add(watchPath);
+                if (serverName != null && !fileServerNames.containsKey(watchPath)) {
+                    fileServerNames.put(watchPath, serverName);
+                }
+                checkFileForChanges(watchPath);
+            }
+        } catch (IOException e) {
+            // Log error but continue
+            System.err.println("Error polling: " + pathStr + " - " + e.getMessage());
         }
     }
     
@@ -204,6 +262,7 @@ public class LogFileWatcher {
             long currentSize = Files.size(file);
             long lastPosition = filePositions.getOrDefault(file, 0L);
             int lastLineNumber = fileLineNumbers.getOrDefault(file, 0);
+            String serverName = fileServerNames.get(file);
             
             if (currentSize > lastPosition) {
                 // File has grown - read new content
@@ -211,6 +270,7 @@ public class LogFileWatcher {
                 
                 if (!newLines.isEmpty()) {
                     List<LogIssue> issues = parser.parseLines(
+                        serverName,
                         file.getFileName().toString(),
                         newLines,
                         lastLineNumber + 1
@@ -226,7 +286,8 @@ public class LogFileWatcher {
                 filePositions.put(file, currentSize);
             } else if (currentSize < lastPosition) {
                 // File was truncated or rotated - reset tracking
-                updateStatus("File rotated: " + file.getFileName());
+                String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+                updateStatus("File rotated: " + file.getFileName() + serverInfo);
                 filePositions.put(file, currentSize);
                 fileLineNumbers.put(file, countLines(file));
             }
@@ -280,11 +341,19 @@ public class LogFileWatcher {
     }
     
     /**
+     * Returns the server name for a tracked file.
+     */
+    public String getServerName(Path file) {
+        return fileServerNames.get(file);
+    }
+    
+    /**
      * Forces a rescan of all watched directories.
      */
     public void rescan() {
         filePositions.clear();
         fileLineNumbers.clear();
+        fileServerNames.clear();
         initialScan();
     }
 }

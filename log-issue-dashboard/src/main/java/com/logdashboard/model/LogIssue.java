@@ -10,6 +10,7 @@ public class LogIssue {
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
     private final String id;
+    private final String serverName;
     private final String fileName;
     private final int lineNumber;
     private final String issueType;
@@ -42,9 +43,10 @@ public class LogIssue {
         }
     }
 
-    public LogIssue(String fileName, int lineNumber, String issueType, String message, 
-                    String fullStackTrace, Severity severity) {
+    public LogIssue(String serverName, String fileName, int lineNumber, String issueType, 
+                    String message, String fullStackTrace, Severity severity) {
         this.id = generateId();
+        this.serverName = serverName;
         this.fileName = fileName;
         this.lineNumber = lineNumber;
         this.issueType = issueType;
@@ -54,6 +56,14 @@ public class LogIssue {
         this.severity = severity;
         this.acknowledged = false;
     }
+    
+    /**
+     * Constructor without server name (for backward compatibility).
+     */
+    public LogIssue(String fileName, int lineNumber, String issueType, String message, 
+                    String fullStackTrace, Severity severity) {
+        this(null, fileName, lineNumber, issueType, message, fullStackTrace, severity);
+    }
 
     private String generateId() {
         return String.valueOf(System.nanoTime());
@@ -61,6 +71,10 @@ public class LogIssue {
 
     public String getId() {
         return id;
+    }
+
+    public String getServerName() {
+        return serverName;
     }
 
     public String getFileName() {
@@ -105,7 +119,8 @@ public class LogIssue {
 
     @Override
     public String toString() {
-        return String.format("[%s] %s - %s:%d - %s", 
-            severity.getDisplayName(), getFormattedTime(), fileName, lineNumber, message);
+        String serverInfo = serverName != null ? serverName + ":" : "";
+        return String.format("[%s] %s - %s%s:%d - %s", 
+            severity.getDisplayName(), getFormattedTime(), serverInfo, fileName, lineNumber, message);
     }
 }
