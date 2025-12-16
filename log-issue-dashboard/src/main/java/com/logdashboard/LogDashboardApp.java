@@ -130,7 +130,7 @@ public class LogDashboardApp {
         analysisService = new AnalysisService(issueStore);
         
         // Create and start the web server
-        webServer = new WebServer(port, issueStore, analysisService);
+        webServer = new WebServer(port, issueStore, analysisService, config);
         webServer.start();
         
         // Create the log file watcher

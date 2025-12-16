@@ -3,6 +3,8 @@ package com.logdashboard.web;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.logdashboard.analysis.AnalysisService;
+import com.logdashboard.config.DashboardConfig;
+import com.logdashboard.config.ServerPath;
 import com.logdashboard.model.LogIssue;
 import com.logdashboard.store.IssueStore;
 
@@ -33,10 +35,12 @@ public class ApiServlet extends HttpServlet {
     
     private final IssueStore issueStore;
     private final AnalysisService analysisService;
+    private final DashboardConfig config;
     
-    public ApiServlet(IssueStore issueStore, AnalysisService analysisService) {
+    public ApiServlet(IssueStore issueStore, AnalysisService analysisService, DashboardConfig config) {
         this.issueStore = issueStore;
         this.analysisService = analysisService;
+        this.config = config;
     }
     
     @Override
@@ -263,18 +267,36 @@ public class ApiServlet extends HttpServlet {
     }
     
     private void handleGetServers(PrintWriter out) {
-        Set<String> servers = issueStore.getActiveServers();
         Map<String, Long> counts = issueStore.getServerCounts();
         
-        List<Map<String, Object>> serverList = new ArrayList<>();
-        for (String server : servers) {
-            Map<String, Object> serverInfo = new LinkedHashMap<>();
-            serverInfo.put("name", server);
-            serverInfo.put("issueCount", counts.getOrDefault(server, 0L));
-            serverList.add(serverInfo);
+        // Use LinkedHashMap to maintain insertion order and avoid duplicates
+        Map<String, Map<String, Object>> serverMap = new LinkedHashMap<>();
+        
+        // First, add all configured servers from the config file
+        if (config != null && config.getServers() != null) {
+            for (ServerPath serverPath : config.getServers()) {
+                String serverName = serverPath.getServerName();
+                if (serverName != null && !serverName.isEmpty()) {
+                    Map<String, Object> serverInfo = new LinkedHashMap<>();
+                    serverInfo.put("name", serverName);
+                    serverInfo.put("issueCount", counts.getOrDefault(serverName, 0L));
+                    serverMap.put(serverName, serverInfo);
+                }
+            }
         }
         
-        out.write(GSON.toJson(serverList));
+        // Then, add any servers from issues that might not be in config
+        Set<String> activeServers = issueStore.getActiveServers();
+        for (String server : activeServers) {
+            if (!serverMap.containsKey(server)) {
+                Map<String, Object> serverInfo = new LinkedHashMap<>();
+                serverInfo.put("name", server);
+                serverInfo.put("issueCount", counts.getOrDefault(server, 0L));
+                serverMap.put(server, serverInfo);
+            }
+        }
+        
+        out.write(GSON.toJson(new ArrayList<>(serverMap.values())));
     }
     
     private void handleHealthCheck(PrintWriter out) {

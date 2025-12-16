@@ -1,6 +1,7 @@
 package com.logdashboard.web;
 
 import com.logdashboard.analysis.AnalysisService;
+import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.store.IssueStore;
 
 import org.apache.catalina.Context;
@@ -19,12 +20,14 @@ public class WebServer {
     private final int port;
     private final IssueStore issueStore;
     private final AnalysisService analysisService;
+    private final DashboardConfig config;
     private EventStreamServlet eventStreamServlet;
     
-    public WebServer(int port, IssueStore issueStore, AnalysisService analysisService) {
+    public WebServer(int port, IssueStore issueStore, AnalysisService analysisService, DashboardConfig config) {
         this.port = port;
         this.issueStore = issueStore;
         this.analysisService = analysisService;
+        this.config = config;
         this.tomcat = new Tomcat();
     }
     
@@ -49,7 +52,7 @@ public class WebServer {
         Context context = tomcat.addContext(contextPath, docBase);
         
         // Add API servlet
-        ApiServlet apiServlet = new ApiServlet(issueStore, analysisService);
+        ApiServlet apiServlet = new ApiServlet(issueStore, analysisService, config);
         Tomcat.addServlet(context, "api", apiServlet);
         context.addServletMappingDecoded("/api/*", "api");
         
