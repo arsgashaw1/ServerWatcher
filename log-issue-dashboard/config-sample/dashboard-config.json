@@ -18,14 +18,28 @@
     {
       "serverName": "MAINFRAME-US",
       "path": "/mainframe/logs",
-      "description": "IBM Mainframe US logs (EBCDIC)",
+      "description": "IBM Mainframe US logs (EBCDIC) - uses Java charset",
       "encoding": "EBCDIC"
     },
     {
       "serverName": "MAINFRAME-ZOS",
       "path": "/zos/logs",
-      "description": "z/OS Unix logs (EBCDIC-1047)",
+      "description": "z/OS Unix logs (EBCDIC-1047) - uses Java charset",
       "encoding": "Cp1047"
+    },
+    {
+      "serverName": "MAINFRAME-ZOS-ICONV",
+      "path": "/zos/logs2",
+      "description": "z/OS Unix logs using iconv for better IBM compatibility",
+      "encoding": "IBM-1047",
+      "useIconv": true
+    },
+    {
+      "serverName": "MAINFRAME-ISO-TO-EBCDIC",
+      "path": "/mainframe/converted",
+      "description": "Files converted from ISO8859-1 to IBM-1047 via iconv",
+      "encoding": "IBM-1047",
+      "useIconv": true
     }
   ],
   "watchPaths": [],
