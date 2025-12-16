@@ -49,13 +49,37 @@ public class IconvConverter {
                 ProcessBuilder pb = new ProcessBuilder("iconv", "--version");
                 pb.redirectErrorStream(true);
                 Process process = pb.start();
+                
+                // Read output
+                StringBuilder output = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        output.append(line).append("\n");
+                    }
+                }
+                
                 boolean completed = process.waitFor(5, TimeUnit.SECONDS);
-                iconvAvailable = completed && process.exitValue() == 0;
+                int exitCode = process.exitValue();
+                iconvAvailable = completed && exitCode == 0;
+                
+                System.out.println("DEBUG: iconv check - completed: " + completed + ", exitCode: " + exitCode);
+                System.out.println("DEBUG: iconv output: " + output.toString().trim());
+                System.out.println("DEBUG: iconv available: " + iconvAvailable);
             } catch (Exception e) {
+                System.out.println("DEBUG: iconv check failed with exception: " + e.getMessage());
                 iconvAvailable = false;
             }
         }
         return iconvAvailable;
+    }
+    
+    /**
+     * Resets the iconv availability cache (for testing).
+     */
+    public static synchronized void resetIconvCache() {
+        iconvAvailable = null;
     }
     
     /**
