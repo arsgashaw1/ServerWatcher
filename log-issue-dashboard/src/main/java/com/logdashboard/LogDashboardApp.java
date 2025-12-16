@@ -1,25 +1,36 @@
 package com.logdashboard;
 
+import com.logdashboard.analysis.AnalysisService;
 import com.logdashboard.config.ConfigLoader;
 import com.logdashboard.config.DashboardConfig;
-import com.logdashboard.ui.DashboardFrame;
+import com.logdashboard.store.IssueStore;
 import com.logdashboard.watcher.ConfigFileWatcher;
 import com.logdashboard.watcher.LogFileWatcher;
+import com.logdashboard.web.WebServer;
 
-import javax.swing.*;
 import java.io.IOException;
 
 /**
  * Main entry point for the Log Issue Dashboard application.
  * 
- * Usage: java -jar log-issue-dashboard.jar <config-folder>
+ * This version runs an embedded Tomcat web server with a modern UI.
+ * 
+ * Usage: java -jar log-issue-dashboard.jar <config-folder> [port]
  * 
  * The config folder should contain a dashboard-config.json file.
  * If it doesn't exist, a default configuration will be created.
  */
 public class LogDashboardApp {
     
-    private static final String VERSION = "1.0.0";
+    private static final String VERSION = "2.0.0";
+    private static final int DEFAULT_PORT = 8080;
+    
+    private static ConfigLoader configLoader;
+    private static IssueStore issueStore;
+    private static AnalysisService analysisService;
+    private static WebServer webServer;
+    private static LogFileWatcher logWatcher;
+    private static ConfigFileWatcher configWatcher;
     
     public static void main(String[] args) {
         // Check command line arguments
@@ -56,7 +67,11 @@ public class LogDashboardApp {
             }
         }
         
-        System.out.println("Log Issue Dashboard v" + VERSION);
+        System.out.println();
+        System.out.println("╔════════════════════════════════════════════════════════════╗");
+        System.out.println("║           Log Issue Dashboard v" + VERSION + "                     ║");
+        System.out.println("╚════════════════════════════════════════════════════════════╝");
+        System.out.println();
         System.out.println("Configuration folder: " + configFolder);
         
         // Load configuration
@@ -83,73 +98,93 @@ public class LogDashboardApp {
             return;
         }
         
-        // Start the application on EDT
-        final DashboardConfig finalConfig = config;
-        SwingUtilities.invokeLater(() -> {
+        // Determine port: command line arg > config file > default
+        int port;
+        if (args.length >= 2) {
             try {
-                startApplication(finalConfig);
-            } catch (Exception e) {
-                System.err.println("Error starting application: " + e.getMessage());
-                e.printStackTrace();
-                JOptionPane.showMessageDialog(null, 
-                    "Error starting application: " + e.getMessage(),
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE);
-                System.exit(1);
+                port = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid port number: " + args[1] + ". Using config/default port.");
+                port = config.getWebServerPort() > 0 ? config.getWebServerPort() : DEFAULT_PORT;
             }
-        });
+        } else {
+            // Use config file port if set, otherwise use default
+            port = config.getWebServerPort() > 0 ? config.getWebServerPort() : DEFAULT_PORT;
+        }
+        
+        // Start the application
+        try {
+            startApplication(config, port);
+        } catch (Exception e) {
+            System.err.println("Error starting application: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
     }
     
-    private static ConfigLoader configLoader;
-    
-    private static void startApplication(DashboardConfig config) {
-        // Create and show the dashboard
-        DashboardFrame dashboard = new DashboardFrame(config);
+    private static void startApplication(DashboardConfig config, int port) throws Exception {
+        // Create the issue store
+        issueStore = new IssueStore(config.getMaxIssuesDisplayed());
         
-        // Create and start the file watcher
-        LogFileWatcher watcher = new LogFileWatcher(
+        // Create the analysis service
+        analysisService = new AnalysisService(issueStore);
+        
+        // Create and start the web server
+        webServer = new WebServer(port, issueStore, analysisService);
+        webServer.start();
+        
+        // Create the log file watcher
+        logWatcher = new LogFileWatcher(
             config,
-            dashboard::addIssue,
-            dashboard::updateStatus
+            issueStore::addIssue,
+            status -> System.out.println("[Watcher] " + status)
         );
         
-        // Create and start the config file watcher
-        ConfigFileWatcher configWatcher = new ConfigFileWatcher(
+        // Create the config file watcher
+        configWatcher = new ConfigFileWatcher(
             configLoader,
             config,
-            watcher::addServerPaths,
-            dashboard::updateStatus
+            logWatcher::addServerPaths,
+            status -> System.out.println("[Config] " + status)
         );
         
-        // Add shutdown hook to stop watchers gracefully
+        // Add shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println();
             System.out.println("Shutting down...");
-            watcher.stop();
+            logWatcher.stop();
             configWatcher.stop();
+            webServer.stop();
+            System.out.println("Goodbye!");
         }));
         
         // Start the watchers
-        watcher.start();
+        logWatcher.start();
         configWatcher.start();
         
-        // Show the dashboard
-        dashboard.setVisible(true);
-        
-        System.out.println("Dashboard started. Watching for log file changes...");
+        System.out.println("Log file watcher started.");
         System.out.println("Configuration file will be monitored for new servers.");
+        System.out.println();
+        System.out.println("Press Ctrl+C to stop the server.");
+        
+        // Keep the server running
+        webServer.await();
     }
     
     private static void printUsage() {
         System.out.println("Log Issue Dashboard v" + VERSION);
         System.out.println();
-        System.out.println("A Java application that watches log files for exceptions/issues");
-        System.out.println("and displays them in a real-time dashboard.");
+        System.out.println("A web-based application that watches log files for exceptions/issues");
+        System.out.println("and displays them in a real-time dashboard with analysis features.");
         System.out.println();
         System.out.println("Usage:");
-        System.out.println("  java -jar log-issue-dashboard.jar <config-folder>");
+        System.out.println("  java -jar log-issue-dashboard.jar <config-folder> [port]");
+        System.out.println();
+        System.out.println("Arguments:");
+        System.out.println("  <config-folder>     Path to folder containing dashboard-config.json");
+        System.out.println("  [port]              HTTP port (default: " + DEFAULT_PORT + ")");
         System.out.println();
         System.out.println("Options:");
-        System.out.println("  <config-folder>     Path to folder containing dashboard-config.json");
         System.out.println("  --help, -h          Show this help message");
         System.out.println("  --version, -v       Show version information");
         System.out.println("  --create-config <path>  Create a sample configuration file");
@@ -158,18 +193,25 @@ public class LogDashboardApp {
         System.out.println("  The config folder should contain a 'dashboard-config.json' file.");
         System.out.println("  If it doesn't exist, a default configuration will be created.");
         System.out.println();
-        System.out.println("Example:");
+        System.out.println("Examples:");
         System.out.println("  java -jar log-issue-dashboard.jar /path/to/config");
-        System.out.println("  java -jar log-issue-dashboard.jar ./config");
+        System.out.println("  java -jar log-issue-dashboard.jar ./config 9090");
         System.out.println();
-        System.out.println("Configuration file options:");
-        System.out.println("  watchPaths          - List of directories/files to watch");
-        System.out.println("  filePatterns        - File patterns to match (e.g., \"*.log\")");
-        System.out.println("  exceptionPatterns   - Regex patterns to detect exceptions");
-        System.out.println("  errorPatterns       - Regex patterns to detect errors");
-        System.out.println("  warningPatterns     - Regex patterns to detect warnings");
-        System.out.println("  pollingIntervalSeconds - How often to check for changes");
-        System.out.println("  maxIssuesDisplayed  - Maximum issues to keep in memory");
+        System.out.println("Web Interface:");
+        System.out.println("  Dashboard:    http://localhost:<port>/");
+        System.out.println("  API:          http://localhost:<port>/api/");
+        System.out.println("  Live Events:  http://localhost:<port>/events");
+        System.out.println();
+        System.out.println("API Endpoints:");
+        System.out.println("  GET  /api/issues           - List all issues");
+        System.out.println("  GET  /api/issues/recent    - Recent issues (last N minutes)");
+        System.out.println("  GET  /api/stats            - Basic statistics");
+        System.out.println("  GET  /api/stats/dashboard  - Dashboard statistics");
+        System.out.println("  GET  /api/analysis         - Detailed analysis report");
+        System.out.println("  GET  /api/analysis/anomalies - Detected anomalies");
+        System.out.println("  GET  /api/servers          - List of servers");
+        System.out.println("  POST /api/issues/{id}/acknowledge - Acknowledge an issue");
+        System.out.println("  POST /api/issues/clear     - Clear all issues");
         System.out.println();
     }
 }

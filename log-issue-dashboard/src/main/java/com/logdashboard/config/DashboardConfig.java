@@ -19,6 +19,7 @@ public class DashboardConfig {
     private int maxIssuesDisplayed;
     private boolean enableSound;
     private String windowTitle;
+    private int webServerPort;
     
     public DashboardConfig() {
         // Default configuration
@@ -46,6 +47,7 @@ public class DashboardConfig {
         this.maxIssuesDisplayed = 500;
         this.enableSound = false;
         this.windowTitle = "Log Issue Dashboard";
+        this.webServerPort = 8080;
     }
 
     public List<String> getWatchPaths() {
@@ -126,6 +128,14 @@ public class DashboardConfig {
 
     public void setWindowTitle(String windowTitle) {
         this.windowTitle = windowTitle;
+    }
+
+    public int getWebServerPort() {
+        return webServerPort;
+    }
+
+    public void setWebServerPort(int webServerPort) {
+        this.webServerPort = webServerPort;
     }
 
     @Override
