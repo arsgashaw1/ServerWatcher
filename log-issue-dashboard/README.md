@@ -274,6 +274,35 @@ cd log-issue-dashboard
 # The JAR will be at build/libs/log-issue-dashboard-1.0.0-all.jar
 ```
 
+## IDE Setup
+
+### IntelliJ IDEA
+
+To import this project into IntelliJ IDEA:
+
+1. **Open the project:**
+   - Go to `File` → `Open`
+   - Navigate to the `log-issue-dashboard` folder (the one containing `build.gradle.kts`)
+   - Click `OK`
+
+2. **Import as Gradle project:**
+   - When prompted, select "Open as Project"
+   - IntelliJ will detect the Gradle build file and import the project automatically
+
+3. **If import fails or dependencies are not resolved:**
+   - Open the Gradle tool window (`View` → `Tool Windows` → `Gradle`)
+   - Click the refresh icon (🔄) to reload the Gradle project
+   - Or run: `./gradlew idea` from the terminal to generate IntelliJ project files
+
+4. **Configure JDK:**
+   - Go to `File` → `Project Structure` → `Project`
+   - Set the Project SDK to Java 11 or higher
+   - Set the Project language level to 11
+
+5. **Verify setup:**
+   - Dependencies should be downloaded automatically
+   - The `src/main/java` folder should be marked as a source root (blue folder icon)
+
 ## Development
 
 ### Project Structure
