@@ -16,8 +16,15 @@ repositories {
 }
 
 dependencies {
-    // JSON parsing for configuration
+    // JSON parsing for configuration and REST API
     implementation("com.google.code.gson:gson:2.10.1")
+    
+    // Embedded Tomcat
+    implementation("org.apache.tomcat.embed:tomcat-embed-core:10.1.18")
+    implementation("org.apache.tomcat.embed:tomcat-embed-jasper:10.1.18")
+    
+    // Jakarta Servlet API (required for Tomcat 10+)
+    implementation("jakarta.servlet:jakarta.servlet-api:6.0.0")
 }
 
 application {

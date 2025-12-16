@@ -42,5 +42,6 @@
   "pollingIntervalSeconds": 2,
   "maxIssuesDisplayed": 500,
   "enableSound": false,
-  "windowTitle": "Log Issue Dashboard"
+  "windowTitle": "Log Issue Dashboard",
+  "webServerPort": 8080
 }
