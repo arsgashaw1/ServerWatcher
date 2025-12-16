@@ -203,18 +203,22 @@ public class IssueStore {
         Map<String, Integer> trend = new LinkedHashMap<>();
         java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("MM-dd");
         
-        // Initialize all days
+        // Initialize all days (from days-1 ago to today)
         for (int i = days - 1; i >= 0; i--) {
-            LocalDateTime day = now.minusDays(i);
+            LocalDateTime day = now.minusDays(i).truncatedTo(ChronoUnit.DAYS);
             trend.put(day.format(formatter), 0);
         }
         
-        // Count issues per day
-        LocalDateTime cutoff = now.minusDays(days);
+        // Count issues per day - use start of the first day as cutoff to match initialized keys
+        LocalDateTime cutoff = now.minusDays(days - 1).truncatedTo(ChronoUnit.DAYS);
         for (LogIssue issue : issues) {
-            if (issue.getDetectedAt().isAfter(cutoff)) {
-                String key = issue.getDetectedAt().format(formatter);
-                trend.merge(key, 1, Integer::sum);
+            LocalDateTime issueTime = issue.getDetectedAt();
+            if (!issueTime.isBefore(cutoff)) {
+                String key = issueTime.format(formatter);
+                // Only count if key exists in our pre-initialized map
+                if (trend.containsKey(key)) {
+                    trend.merge(key, 1, Integer::sum);
+                }
             }
         }
         

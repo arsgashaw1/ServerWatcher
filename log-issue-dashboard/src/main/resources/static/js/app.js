@@ -326,26 +326,49 @@ class LogDashboard {
     
     // Issue handling
     addIssue(issue, isNew = false) {
-        // Add to beginning of current view
-        this.issues.unshift(issue);
+        // Always update total count (global count regardless of filters)
+        this.pagination.total++;
         
-        // Limit issues in view
-        if (this.issues.length > this.pagination.limit) {
-            this.issues = this.issues.slice(0, this.pagination.limit);
+        // Check if issue matches current filters
+        const matchesFilters = this.issueMatchesFilters(issue);
+        
+        if (matchesFilters) {
+            // Add to beginning of current view only if it matches filters
+            this.issues.unshift(issue);
+            
+            // Limit issues in view
+            if (this.issues.length > this.pagination.limit) {
+                this.issues = this.issues.slice(0, this.pagination.limit);
+            }
+            
+            // Update filtered count
+            this.pagination.totalFiltered++;
         }
         
+        // Update display
+        this.updateIssueCount();
+        
         // Re-render or add single item
-        if (isNew) {
+        if (isNew && matchesFilters) {
             this.prependIssueElement(issue);
-        } else {
+        } else if (!isNew) {
             this.renderIssues();
         }
     }
     
-    prependIssueElement(issue) {
-        // Check if it matches current filters
-        if (this.filters.severity && issue.severity !== this.filters.severity) return;
-        if (this.filters.server && issue.serverName !== this.filters.server) return;
+    /**
+     * Checks if an issue matches the current filter criteria.
+     */
+    issueMatchesFilters(issue) {
+        // Check severity filter
+        if (this.filters.severity && issue.severity !== this.filters.severity) {
+            return false;
+        }
+        
+        // Check server filter
+        if (this.filters.server && issue.serverName !== this.filters.server) {
+            return false;
+        }
         
         // Check date filters
         if (this.filters.dateFrom || this.filters.dateTo) {
@@ -353,15 +376,19 @@ class LogDashboard {
             if (this.filters.dateFrom) {
                 const fromDate = new Date(this.filters.dateFrom);
                 fromDate.setHours(0, 0, 0, 0);
-                if (issueDate < fromDate) return;
+                if (issueDate < fromDate) return false;
             }
             if (this.filters.dateTo) {
                 const toDate = new Date(this.filters.dateTo);
                 toDate.setHours(23, 59, 59, 999);
-                if (issueDate > toDate) return;
+                if (issueDate > toDate) return false;
             }
         }
         
+        return true;
+    }
+    
+    prependIssueElement(issue) {
         const list = document.getElementById('issuesList');
         
         // Remove empty state if present
@@ -373,11 +400,6 @@ class LogDashboard {
         const el = this.createIssueElement(issue);
         el.classList.add('new');
         list.insertBefore(el, list.firstChild);
-        
-        // Update counts
-        this.pagination.total++;
-        this.pagination.totalFiltered++;
-        this.updateIssueCount();
         
         // Remove animation class after animation completes
         setTimeout(() => el.classList.remove('new'), 300);
@@ -645,13 +667,15 @@ class LogDashboard {
                 fromDate = toDate;
                 break;
             case '7d':
+                // Last 7 days including today: subtract 6 days
                 const week = new Date(today);
-                week.setDate(week.getDate() - 7);
+                week.setDate(week.getDate() - 6);
                 fromDate = week.toISOString().split('T')[0];
                 break;
             case '30d':
+                // Last 30 days including today: subtract 29 days
                 const month = new Date(today);
-                month.setDate(month.getDate() - 30);
+                month.setDate(month.getDate() - 29);
                 fromDate = month.toISOString().split('T')[0];
                 break;
             default:

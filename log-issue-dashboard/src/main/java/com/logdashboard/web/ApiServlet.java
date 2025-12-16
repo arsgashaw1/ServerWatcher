@@ -48,9 +48,17 @@ public class ApiServlet extends HttpServlet {
             pathInfo = "/";
         }
         
+        resp.setHeader("Access-Control-Allow-Origin", "*");
+        
+        // Handle export separately to set correct content-type BEFORE getting writer
+        if ("/export".equals(pathInfo)) {
+            handleExportIssues(req, resp);
+            return;
+        }
+        
+        // For all other endpoints, use JSON
         resp.setContentType("application/json");
         resp.setCharacterEncoding("UTF-8");
-        resp.setHeader("Access-Control-Allow-Origin", "*");
         
         PrintWriter out = resp.getWriter();
         
@@ -82,9 +90,6 @@ public class ApiServlet extends HttpServlet {
                     break;
                 case "/daterange":
                     handleGetDateRange(out);
-                    break;
-                case "/export":
-                    handleExportIssues(req, out, resp);
                     break;
                 default:
                     if (pathInfo.startsWith("/issues/")) {
@@ -299,7 +304,7 @@ public class ApiServlet extends HttpServlet {
         out.write(GSON.toJson(dateRange));
     }
     
-    private void handleExportIssues(HttpServletRequest req, PrintWriter out, HttpServletResponse resp) {
+    private void handleExportIssues(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         String severity = req.getParameter("severity");
         String server = req.getParameter("server");
         String fromDate = req.getParameter("from");
@@ -322,11 +327,17 @@ public class ApiServlet extends HttpServlet {
         // Get all filtered issues (no pagination for export)
         List<LogIssue> issues = issueStore.getFilteredIssues(sev, server, from, to, 0, Integer.MAX_VALUE);
         
+        // Set content-type BEFORE getting writer
         if ("csv".equalsIgnoreCase(format)) {
             resp.setContentType("text/csv");
+            resp.setCharacterEncoding("UTF-8");
             resp.setHeader("Content-Disposition", "attachment; filename=log-issues-export.csv");
+            PrintWriter out = resp.getWriter();
             exportAsCsv(issues, out);
         } else {
+            resp.setContentType("application/json");
+            resp.setCharacterEncoding("UTF-8");
+            PrintWriter out = resp.getWriter();
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("exportedAt", LocalDateTime.now().toString());
             response.put("totalIssues", issues.size());
