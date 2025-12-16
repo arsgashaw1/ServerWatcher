@@ -56,7 +56,14 @@ tasks.register<Jar>("fatJar") {
         configurations.runtimeClasspath.get()
             .filter { it.name.endsWith("jar") }
             .map { zipTree(it) }
-    })
+    }) {
+        // Exclude signature files from signed JARs to prevent SecurityException
+        exclude("META-INF/*.SF")
+        exclude("META-INF/*.DSA")
+        exclude("META-INF/*.RSA")
+        exclude("META-INF/*.EC")
+        exclude("META-INF/MANIFEST.MF")
+    }
 }
 
 tasks.build {
