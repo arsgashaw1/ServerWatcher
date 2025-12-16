@@ -220,12 +220,12 @@ public class LogFileWatcher {
             System.out.println("=== DEBUG: Initial file content ===");
             System.out.println("File: " + file);
             System.out.println("Server: " + serverName);
-            System.out.println("Charset: " + effectiveCharset + ", iconvEncoding: " + effectiveIconvEncoding + ", useIconv: " + effectiveUseIconv);
+            System.out.println("Configured Charset: " + effectiveCharset + ", iconvEncoding: " + effectiveIconvEncoding + ", useIconv: " + effectiveUseIconv);
             try {
                 byte[] rawBytes = Files.readAllBytes(file);
                 System.out.println("Total bytes in file: " + rawBytes.length);
                 
-                // Show first 500 bytes as hex
+                // Show first 100 bytes as hex
                 int previewLen = Math.min(rawBytes.length, 100);
                 StringBuilder hexPreview = new StringBuilder();
                 for (int i = 0; i < previewLen; i++) {
@@ -234,17 +234,45 @@ public class LogFileWatcher {
                 }
                 System.out.println("Raw bytes (first 100):\n" + hexPreview);
                 
-                // Decode content
-                String content;
-                if (effectiveUseIconv && effectiveIconvEncoding != null && IconvConverter.isIconvAvailable()) {
-                    content = IconvConverter.convertToUtf8(rawBytes, effectiveIconvEncoding);
-                } else {
-                    content = new String(rawBytes, effectiveCharset);
+                // Try different decoding methods
+                System.out.println("\n--- Method 1: Direct read as ISO8859-1 (no conversion) ---");
+                String asIso = new String(rawBytes, StandardCharsets.ISO_8859_1);
+                System.out.println(asIso.length() > 500 ? asIso.substring(0, 500) + "..." : asIso);
+                
+                System.out.println("\n--- Method 2: Direct read as UTF-8 ---");
+                String asUtf8 = new String(rawBytes, StandardCharsets.UTF_8);
+                System.out.println(asUtf8.length() > 500 ? asUtf8.substring(0, 500) + "..." : asUtf8);
+                
+                if (effectiveIconvEncoding != null && IconvConverter.isIconvAvailable()) {
+                    System.out.println("\n--- Method 3: iconv -f " + effectiveIconvEncoding + " -t UTF-8 ---");
+                    try {
+                        String iconvUtf8 = IconvConverter.convertToUtf8(rawBytes, effectiveIconvEncoding);
+                        System.out.println(iconvUtf8.length() > 500 ? iconvUtf8.substring(0, 500) + "..." : iconvUtf8);
+                    } catch (Exception e) {
+                        System.out.println("Failed: " + e.getMessage());
+                    }
+                    
+                    System.out.println("\n--- Method 4: iconv -f " + effectiveIconvEncoding + " -t ISO8859-1 ---");
+                    try {
+                        String iconvIso = IconvConverter.convertToIso8859(rawBytes, effectiveIconvEncoding);
+                        System.out.println(iconvIso.length() > 500 ? iconvIso.substring(0, 500) + "..." : iconvIso);
+                    } catch (Exception e) {
+                        System.out.println("Failed: " + e.getMessage());
+                    }
                 }
-                System.out.println("Decoded content (first 1000 chars):");
-                System.out.println(content.length() > 1000 ? content.substring(0, 1000) + "..." : content);
+                
+                // If it looks like EBCDIC (IBM-1047), try converting to ISO8859-1
+                System.out.println("\n--- Method 5: iconv -f IBM-1047 -t ISO8859-1 (EBCDIC to Latin-1) ---");
+                try {
+                    String ebcdicToIso = IconvConverter.convertToIso8859(rawBytes, "IBM-1047");
+                    System.out.println(ebcdicToIso.length() > 500 ? ebcdicToIso.substring(0, 500) + "..." : ebcdicToIso);
+                } catch (Exception e) {
+                    System.out.println("Failed: " + e.getMessage());
+                }
+                
             } catch (Exception e) {
                 System.out.println("Error reading file for debug: " + e.getMessage());
+                e.printStackTrace();
             }
             System.out.println("=== END DEBUG ===\n");
             
