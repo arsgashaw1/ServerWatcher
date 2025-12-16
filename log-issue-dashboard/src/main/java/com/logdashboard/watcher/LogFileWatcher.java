@@ -152,19 +152,21 @@ public class LogFileWatcher {
             for (ServerPath server : config.getServers()) {
                 String serverName = server.getServerName();
                 String pathStr = server.getPath();
-                Charset charset = server.getCharset();
-                String iconvEncoding = server.getIconvEncoding();
-                boolean useIconv = server.isUseIconv();
                 String encodingInfo = server.getEncoding() != null ? 
-                    " [" + server.getEncoding() + (useIconv ? "/iconv" : "") + "]" : "";
+                    " [" + server.getEncoding() + (server.isUseIconv() ? "/iconv" : "") + "]" : "";
                 updateStatus("Scanning server: " + serverName + " -> " + pathStr + encodingInfo);
-                scanPath(pathStr, serverName, charset, iconvEncoding, useIconv);
+                scanPath(server);
             }
         }
     }
     
-    private void scanPath(String pathStr, String serverName, Charset charset, 
-                          String iconvEncoding, boolean useIconv) {
+    /**
+     * Scans a server path for log files.
+     * Supports per-file encoding configuration via ServerPath.fileEncodings.
+     */
+    private void scanPath(ServerPath server) {
+        String pathStr = server.getPath();
+        String serverName = server.getServerName();
         Path watchPath = Paths.get(pathStr);
         
         if (!Files.exists(watchPath)) {
@@ -179,16 +181,63 @@ public class LogFileWatcher {
                 try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
                     for (Path file : stream) {
                         if (Files.isRegularFile(file) && matchesFilePattern(file)) {
-                            initializeFile(file, serverName, charset, iconvEncoding, useIconv);
+                            // Get per-file encoding (or use server default)
+                            String fileName = file.getFileName().toString();
+                            String fileEncoding = server.getEncodingForFile(fileName);
+                            initializeFileWithEncoding(file, serverName, fileEncoding, server.isUseIconv());
                         }
                     }
                 }
             } else if (Files.isRegularFile(watchPath)) {
-                initializeFile(watchPath, serverName, charset, iconvEncoding, useIconv);
+                String fileName = watchPath.getFileName().toString();
+                String fileEncoding = server.getEncodingForFile(fileName);
+                initializeFileWithEncoding(watchPath, serverName, fileEncoding, server.isUseIconv());
             }
         } catch (IOException e) {
             updateStatus("Error scanning path: " + pathStr + " - " + e.getMessage());
         }
+    }
+    
+    // Legacy method for backward compatibility
+    private void scanPath(String pathStr, String serverName, Charset charset, 
+                          String iconvEncoding, boolean useIconv) {
+        ServerPath server = new ServerPath(serverName, pathStr, null, 
+            iconvEncoding != null ? iconvEncoding : charset.displayName(), useIconv);
+        scanPath(server);
+    }
+    
+    /**
+     * Initializes tracking for a file with a specific encoding.
+     * Uses the correct conversion method based on encoding type:
+     * - EBCDIC (IBM-1047, etc.): iconv -f IBM-1047 -t ISO8859-1
+     * - UTF-8 or ISO8859-1: Direct read
+     */
+    private void initializeFileWithEncoding(Path file, String serverName, String encoding, boolean useIconv) {
+        // Determine the iconv encoding and charset based on the encoding string
+        String iconvEncoding = IconvConverter.normalizeToIconvEncoding(encoding);
+        Charset charset;
+        
+        // For EBCDIC, we'll convert to ISO8859-1, so set charset accordingly
+        if (IconvConverter.isEbcdicEncoding(encoding)) {
+            charset = StandardCharsets.ISO_8859_1;  // Result will be ISO8859-1 after conversion
+            useIconv = true;  // Force iconv for EBCDIC
+        } else if ("ISO8859-1".equals(iconvEncoding) || "ISO-8859-1".equalsIgnoreCase(encoding)) {
+            charset = StandardCharsets.ISO_8859_1;
+            useIconv = false;  // Direct read for ISO8859-1
+        } else {
+            charset = StandardCharsets.UTF_8;
+            useIconv = false;  // Direct read for UTF-8
+        }
+        
+        String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+        String encodingInfo = encoding != null ? " (" + encoding + 
+            (IconvConverter.isEbcdicEncoding(encoding) ? " -> ISO8859-1/iconv" : "") + ")" : "";
+        
+        System.out.println("DEBUG: Initializing file " + file.getFileName() + serverInfo + encodingInfo);
+        System.out.println("DEBUG:   encoding=" + encoding + ", iconvEncoding=" + iconvEncoding + 
+            ", isEbcdic=" + IconvConverter.isEbcdicEncoding(encoding) + ", useIconv=" + useIconv);
+        
+        initializeFile(file, serverName, charset, iconvEncoding, useIconv);
     }
     
     /**
@@ -534,23 +583,34 @@ public class LogFileWatcher {
                 buffer.get(bytes);
                 
                 String content;
-                if (useIconv && iconvEncoding != null && IconvConverter.isIconvAvailable()) {
-                    // Use iconv for conversion (better IBM mainframe compatibility)
+                
+                // Determine conversion method based on encoding type:
+                // - EBCDIC (IBM-1047, etc.): Use iconv -f IBM-1047 -t ISO8859-1
+                // - UTF-8 or ISO8859-1: Direct read (no conversion needed)
+                boolean isEbcdic = IconvConverter.isEbcdicEncoding(iconvEncoding);
+                
+                if (isEbcdic && IconvConverter.isIconvAvailable()) {
+                    // EBCDIC encoding: Convert to ISO8859-1 (Method 5)
+                    // Command: iconv -f IBM-1047 -t ISO8859-1
                     try {
-                        content = IconvConverter.convertToUtf8(bytes, iconvEncoding);
+                        content = IconvConverter.convertEbcdicToReadable(bytes, iconvEncoding);
                     } catch (IOException e) {
                         // Fall back to Java charset if iconv fails
+                        System.err.println("EBCDIC conversion failed, falling back to Java charset: " + e.getMessage());
                         content = new String(bytes, charset);
                     }
+                } else if (StandardCharsets.ISO_8859_1.equals(charset) || "ISO8859-1".equals(iconvEncoding)) {
+                    // ISO8859-1: Direct read
+                    content = new String(bytes, StandardCharsets.ISO_8859_1);
                 } else {
-                    // Use Java's built-in charset handling
+                    // UTF-8 or other: Direct read with specified charset
                     content = new String(bytes, charset);
                 }
                 
                 // TODO: REMOVE - Temporary debug log to see file content
                 System.out.println("=== DEBUG: Reading file content ===");
                 System.out.println("File: " + file.getFileName());
-                System.out.println("Charset: " + charset + ", iconvEncoding: " + iconvEncoding + ", useIconv: " + useIconv);
+                System.out.println("Encoding: " + iconvEncoding + ", isEbcdic: " + isEbcdic);
                 System.out.println("Bytes read: " + bytes.length);
                 System.out.println("Content preview (first 500 chars):");
                 System.out.println(content.length() > 500 ? content.substring(0, 500) + "..." : content);

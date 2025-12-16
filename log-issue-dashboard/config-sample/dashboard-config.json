@@ -3,12 +3,13 @@
     {
       "serverName": "U3172QA",
       "path": "/a/b/c",
-      "description": "QA Server logs"
+      "description": "QA Server logs (UTF-8 default)"
     },
     {
       "serverName": "U3172PROD",
       "path": "/u/prod/logs",
-      "description": "Production Server logs"
+      "description": "Production Server logs (ISO8859-1)",
+      "encoding": "ISO8859-1"
     },
     {
       "serverName": "U3172DEV",
@@ -16,30 +17,28 @@
       "description": "Development Server logs"
     },
     {
-      "serverName": "MAINFRAME-US",
-      "path": "/mainframe/logs",
-      "description": "IBM Mainframe US logs (EBCDIC) - uses Java charset",
-      "encoding": "EBCDIC"
-    },
-    {
       "serverName": "MAINFRAME-ZOS",
       "path": "/zos/logs",
-      "description": "z/OS Unix logs (EBCDIC-1047) - uses Java charset",
-      "encoding": "Cp1047"
+      "description": "z/OS logs - EBCDIC files converted to ISO8859-1 using iconv",
+      "encoding": "IBM-1047"
     },
     {
-      "serverName": "MAINFRAME-ZOS-ICONV",
-      "path": "/zos/logs2",
-      "description": "z/OS Unix logs using iconv for better IBM compatibility",
-      "encoding": "IBM-1047",
-      "useIconv": true
+      "serverName": "MIXED-ENCODING-SERVER",
+      "path": "/mixed/logs",
+      "description": "Server with different file encodings in same directory",
+      "encoding": "ISO8859-1",
+      "fileEncodings": {
+        "mat-extract.log": "IBM-1047",
+        "ebcdic-*.log": "IBM-1047",
+        "application-server.log": "ISO8859-1",
+        "*.txt": "UTF-8"
+      }
     },
     {
-      "serverName": "MAINFRAME-ISO-TO-EBCDIC",
-      "path": "/mainframe/converted",
-      "description": "Files converted from ISO8859-1 to IBM-1047 via iconv",
-      "encoding": "IBM-1047",
-      "useIconv": true
+      "serverName": "MAINFRAME-US",
+      "path": "/mainframe/logs",
+      "description": "IBM Mainframe US logs (EBCDIC-037)",
+      "encoding": "IBM-037"
     }
   ],
   "watchPaths": [],
