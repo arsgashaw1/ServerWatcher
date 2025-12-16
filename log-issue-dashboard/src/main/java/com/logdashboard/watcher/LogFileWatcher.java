@@ -263,25 +263,32 @@ public class LogFileWatcher {
                 String content;
                 boolean isEbcdic = IconvConverter.isEbcdicEncoding(effectiveIconvEncoding);
                 
+                System.out.println("=== [" + file.getFileName() + "] ===");
+                System.out.println("effectiveIconvEncoding: " + effectiveIconvEncoding);
+                System.out.println("isEbcdic: " + isEbcdic);
+                System.out.println("isIconvAvailable: " + IconvConverter.isIconvAvailable());
+                System.out.println("Size: " + rawBytes.length + " bytes");
+                
                 if (isEbcdic && IconvConverter.isIconvAvailable()) {
                     // EBCDIC: iconv -f IBM-1047 -t ISO8859-1
+                    System.out.println("Using: iconv -f " + effectiveIconvEncoding + " -t ISO8859-1");
                     content = IconvConverter.convertEbcdicToReadable(rawBytes, effectiveIconvEncoding);
                 } else if (StandardCharsets.ISO_8859_1.equals(effectiveCharset)) {
                     // ISO8859-1: direct read
+                    System.out.println("Using: direct read as ISO8859-1");
                     content = new String(rawBytes, StandardCharsets.ISO_8859_1);
                 } else {
                     // UTF-8: direct read
+                    System.out.println("Using: direct read as " + effectiveCharset);
                     content = new String(rawBytes, effectiveCharset);
                 }
                 
-                System.out.println("=== [" + file.getFileName() + "] ===");
-                System.out.println("Encoding: " + effectiveIconvEncoding + (isEbcdic ? " (EBCDIC -> ISO8859-1)" : ""));
-                System.out.println("Size: " + rawBytes.length + " bytes");
                 System.out.println("Content (first 1000 chars):");
                 System.out.println(content.length() > 1000 ? content.substring(0, 1000) + "..." : content);
                 System.out.println("=== END ===\n");
             } catch (Exception e) {
                 System.out.println("Error reading " + file.getFileName() + ": " + e.getMessage());
+                e.printStackTrace();
             }
             
             long size = Files.size(file);

@@ -115,8 +115,12 @@ public class IconvConverter {
      */
     public static String convertToIso8859(byte[] data, String fromEncoding) throws IOException {
         if (!isIconvAvailable()) {
+            System.out.println("DEBUG: iconv not available, using fallback");
             return convertToIso8859Fallback(data, fromEncoding);
         }
+        
+        // TODO: REMOVE - Debug print actual command
+        System.out.println("DEBUG: Running command: iconv -f " + fromEncoding + " -t " + ICONV_ISO8859_1);
         
         ProcessBuilder pb = new ProcessBuilder(
             "iconv",
