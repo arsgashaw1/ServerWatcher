@@ -1,0 +1,32 @@
+{
+  "watchPaths": [
+    "/path/to/your/logs",
+    "/another/log/directory"
+  ],
+  "filePatterns": [
+    "*.log",
+    "*.txt",
+    "*.out"
+  ],
+  "exceptionPatterns": [
+    ".*Exception.*",
+    ".*Error:.*",
+    ".*at\\s+[\\w.$]+\\([^)]+\\).*",
+    ".*Caused by:.*",
+    ".*FATAL.*",
+    ".*Throwable.*"
+  ],
+  "errorPatterns": [
+    ".*\\bERROR\\b.*",
+    ".*\\bFAILED\\b.*",
+    ".*\\bFAILURE\\b.*"
+  ],
+  "warningPatterns": [
+    ".*\\bWARN\\b.*",
+    ".*\\bWARNING\\b.*"
+  ],
+  "pollingIntervalSeconds": 2,
+  "maxIssuesDisplayed": 500,
+  "enableSound": false,
+  "windowTitle": "Log Issue Dashboard"
+}
