@@ -229,14 +229,6 @@ public class LogFileWatcher {
             useIconv = false;  // Direct read for UTF-8
         }
         
-        String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-        String encodingInfo = encoding != null ? " (" + encoding + 
-            (IconvConverter.isEbcdicEncoding(encoding) ? " -> ISO8859-1/iconv" : "") + ")" : "";
-        
-        System.out.println("DEBUG: Initializing file " + file.getFileName() + serverInfo + encodingInfo);
-        System.out.println("DEBUG:   encoding=" + encoding + ", iconvEncoding=" + iconvEncoding + 
-            ", isEbcdic=" + IconvConverter.isEbcdicEncoding(encoding) + ", useIconv=" + useIconv);
-        
         initializeFile(file, serverName, charset, iconvEncoding, useIconv);
     }
     
@@ -265,65 +257,6 @@ public class LogFileWatcher {
                 }
             }
             
-            // TODO: REMOVE - Temporary debug log to see file content on initial load
-            System.out.println("=== DEBUG: Initial file content ===");
-            System.out.println("File: " + file);
-            System.out.println("Server: " + serverName);
-            System.out.println("Configured Charset: " + effectiveCharset + ", iconvEncoding: " + effectiveIconvEncoding + ", useIconv: " + effectiveUseIconv);
-            try {
-                byte[] rawBytes = Files.readAllBytes(file);
-                System.out.println("Total bytes in file: " + rawBytes.length);
-                
-                // Show first 100 bytes as hex
-                int previewLen = Math.min(rawBytes.length, 100);
-                StringBuilder hexPreview = new StringBuilder();
-                for (int i = 0; i < previewLen; i++) {
-                    hexPreview.append(String.format("%02X ", rawBytes[i] & 0xFF));
-                    if ((i + 1) % 20 == 0) hexPreview.append("\n");
-                }
-                System.out.println("Raw bytes (first 100):\n" + hexPreview);
-                
-                // Try different decoding methods
-                System.out.println("\n--- Method 1: Direct read as ISO8859-1 (no conversion) ---");
-                String asIso = new String(rawBytes, StandardCharsets.ISO_8859_1);
-                System.out.println(asIso.length() > 500 ? asIso.substring(0, 500) + "..." : asIso);
-                
-                System.out.println("\n--- Method 2: Direct read as UTF-8 ---");
-                String asUtf8 = new String(rawBytes, StandardCharsets.UTF_8);
-                System.out.println(asUtf8.length() > 500 ? asUtf8.substring(0, 500) + "..." : asUtf8);
-                
-                if (effectiveIconvEncoding != null && IconvConverter.isIconvAvailable()) {
-                    System.out.println("\n--- Method 3: iconv -f " + effectiveIconvEncoding + " -t UTF-8 ---");
-                    try {
-                        String iconvUtf8 = IconvConverter.convertToUtf8(rawBytes, effectiveIconvEncoding);
-                        System.out.println(iconvUtf8.length() > 500 ? iconvUtf8.substring(0, 500) + "..." : iconvUtf8);
-                    } catch (Exception e) {
-                        System.out.println("Failed: " + e.getMessage());
-                    }
-                    
-                    System.out.println("\n--- Method 4: iconv -f " + effectiveIconvEncoding + " -t ISO8859-1 ---");
-                    try {
-                        String iconvIso = IconvConverter.convertToIso8859(rawBytes, effectiveIconvEncoding);
-                        System.out.println(iconvIso.length() > 500 ? iconvIso.substring(0, 500) + "..." : iconvIso);
-                    } catch (Exception e) {
-                        System.out.println("Failed: " + e.getMessage());
-                    }
-                }
-                
-                // If it looks like EBCDIC (IBM-1047), try converting to ISO8859-1
-                System.out.println("\n--- Method 5: iconv -f IBM-1047 -t ISO8859-1 (EBCDIC to Latin-1) ---");
-                try {
-                    String ebcdicToIso = IconvConverter.convertToIso8859(rawBytes, "IBM-1047");
-                    System.out.println(ebcdicToIso.length() > 500 ? ebcdicToIso.substring(0, 500) + "..." : ebcdicToIso);
-                } catch (Exception e) {
-                    System.out.println("Failed: " + e.getMessage());
-                }
-                
-            } catch (Exception e) {
-                System.out.println("Error reading file for debug: " + e.getMessage());
-                e.printStackTrace();
-            }
-            System.out.println("=== END DEBUG ===\n");
             
             long size = Files.size(file);
             int lineCount = countLines(file, effectiveCharset, effectiveIconvEncoding, effectiveUseIconv);
@@ -607,14 +540,9 @@ public class LogFileWatcher {
                     content = new String(bytes, charset);
                 }
                 
-                // TODO: REMOVE - Temporary debug log to see file content
-                System.out.println("=== DEBUG: Reading file content ===");
-                System.out.println("File: " + file.getFileName());
-                System.out.println("Encoding: " + iconvEncoding + ", isEbcdic: " + isEbcdic);
-                System.out.println("Bytes read: " + bytes.length);
-                System.out.println("Content preview (first 500 chars):");
-                System.out.println(content.length() > 500 ? content.substring(0, 500) + "..." : content);
-                System.out.println("=== END DEBUG ===");
+                // TODO: REMOVE - Debug log to see file content
+                System.out.println("[" + file.getFileName() + "] Read " + bytes.length + " bytes (" + iconvEncoding + "):");
+                System.out.println(content.length() > 1000 ? content.substring(0, 1000) + "..." : content);
                 
                 // Split into lines
                 for (int i = 0; i < content.length(); i++) {

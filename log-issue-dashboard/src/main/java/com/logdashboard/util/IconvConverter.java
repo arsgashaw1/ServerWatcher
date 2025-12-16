@@ -118,9 +118,6 @@ public class IconvConverter {
             return convertToIso8859Fallback(data, fromEncoding);
         }
         
-        // TODO: REMOVE - Debug log to see iconv command
-        System.out.println("DEBUG iconv command: iconv -f " + fromEncoding + " -t " + ICONV_ISO8859_1);
-        
         ProcessBuilder pb = new ProcessBuilder(
             "iconv",
             "-f", fromEncoding,
@@ -143,9 +140,6 @@ public class IconvConverter {
     public static String convertEbcdicToReadable(byte[] data, String ebcdicEncoding) throws IOException {
         // Normalize encoding name to iconv format
         String iconvEncoding = normalizeToIconvEncoding(ebcdicEncoding);
-        
-        System.out.println("DEBUG: Converting EBCDIC using: iconv -f " + iconvEncoding + " -t ISO8859-1");
-        
         return convertToIso8859(data, iconvEncoding);
     }
     
@@ -234,9 +228,6 @@ public class IconvConverter {
         if (!isIconvAvailable()) {
             return convertFileToIso8859Fallback(inputPath, fromEncoding);
         }
-        
-        // TODO: REMOVE - Debug log to see iconv command
-        System.out.println("DEBUG iconv command: iconv -f " + fromEncoding + " -t " + ICONV_ISO8859_1 + " " + inputPath);
         
         ProcessBuilder pb = new ProcessBuilder(
             "iconv",
