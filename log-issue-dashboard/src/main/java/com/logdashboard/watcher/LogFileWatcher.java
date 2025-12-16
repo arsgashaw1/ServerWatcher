@@ -356,4 +356,51 @@ public class LogFileWatcher {
         fileServerNames.clear();
         initialScan();
     }
+    
+    /**
+     * Adds new server paths to watch dynamically.
+     * This is called when the configuration file is updated with new servers.
+     * 
+     * @param newServers List of new ServerPath objects to watch
+     */
+    public void addServerPaths(List<ServerPath> newServers) {
+        if (newServers == null || newServers.isEmpty()) {
+            return;
+        }
+        
+        for (ServerPath server : newServers) {
+            String serverName = server.getServerName();
+            String pathStr = server.getPath();
+            
+            if (pathStr == null || pathStr.isEmpty()) {
+                continue;
+            }
+            
+            String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+            updateStatus("Adding new server path: " + pathStr + serverInfo);
+            
+            // Scan the new path
+            scanPath(pathStr, serverName);
+        }
+        
+        int totalPaths = getTotalWatchPaths() + newServers.size();
+        updateStatus("Now watching " + totalPaths + " path(s)");
+    }
+    
+    /**
+     * Adds a single server path to watch dynamically.
+     * 
+     * @param serverName The server name (can be null for legacy paths)
+     * @param path The path to watch
+     */
+    public void addServerPath(String serverName, String path) {
+        if (path == null || path.isEmpty()) {
+            return;
+        }
+        
+        String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+        updateStatus("Adding new server path: " + path + serverInfo);
+        
+        scanPath(path, serverName);
+    }
 }
