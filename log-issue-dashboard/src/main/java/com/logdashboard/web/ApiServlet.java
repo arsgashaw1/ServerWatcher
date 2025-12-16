@@ -7,6 +7,7 @@ import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.config.ServerPath;
 import com.logdashboard.model.LogIssue;
 import com.logdashboard.store.IssueStore;
+import com.logdashboard.util.EncodingDetector;
 
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
@@ -15,6 +16,9 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -94,6 +98,9 @@ public class ApiServlet extends HttpServlet {
                     break;
                 case "/daterange":
                     handleGetDateRange(out);
+                    break;
+                case "/encoding/detect":
+                    handleDetectEncoding(req, out);
                     break;
                 default:
                     if (pathInfo.startsWith("/issues/")) {
@@ -324,6 +331,78 @@ public class ApiServlet extends HttpServlet {
         dateRange.put("totalIssues", issueStore.getCurrentIssuesCount());
         
         out.write(GSON.toJson(dateRange));
+    }
+    
+    private void handleDetectEncoding(HttpServletRequest req, PrintWriter out) {
+        String filePath = req.getParameter("path");
+        
+        if (filePath == null || filePath.isEmpty()) {
+            // Return encoding info for all configured servers
+            List<Map<String, Object>> results = new ArrayList<>();
+            
+            if (config != null && config.getServers() != null) {
+                for (ServerPath server : config.getServers()) {
+                    Map<String, Object> serverInfo = new LinkedHashMap<>();
+                    serverInfo.put("serverName", server.getServerName());
+                    serverInfo.put("path", server.getPath());
+                    serverInfo.put("configuredEncoding", server.getEncoding());
+                    
+                    Path path = Paths.get(server.getPath());
+                    if (Files.exists(path)) {
+                        if (Files.isDirectory(path)) {
+                            // Check first file in directory
+                            try (var stream = Files.newDirectoryStream(path)) {
+                                for (Path file : stream) {
+                                    if (Files.isRegularFile(file)) {
+                                        addEncodingDetection(serverInfo, file);
+                                        break;
+                                    }
+                                }
+                            } catch (IOException e) {
+                                serverInfo.put("error", "Cannot read directory: " + e.getMessage());
+                            }
+                        } else {
+                            addEncodingDetection(serverInfo, path);
+                        }
+                    } else {
+                        serverInfo.put("error", "Path does not exist");
+                    }
+                    
+                    results.add(serverInfo);
+                }
+            }
+            
+            out.write(GSON.toJson(results));
+        } else {
+            // Detect encoding for specific file
+            Path path = Paths.get(filePath);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("path", filePath);
+            
+            if (!Files.exists(path)) {
+                result.put("error", "File does not exist");
+            } else if (!Files.isRegularFile(path)) {
+                result.put("error", "Path is not a regular file");
+            } else {
+                addEncodingDetection(result, path);
+            }
+            
+            out.write(GSON.toJson(result));
+        }
+    }
+    
+    private void addEncodingDetection(Map<String, Object> result, Path file) {
+        try {
+            result.put("analyzedFile", file.getFileName().toString());
+            EncodingDetector.EncodingResult detection = EncodingDetector.detectEncodingWithDetails(file);
+            result.put("detectedEncoding", detection.charset.displayName());
+            result.put("isEbcdic", detection.isEbcdic());
+            result.put("confidence", Math.round(detection.confidence * 100) + "%");
+            result.put("ebcdicScore", Math.round(detection.ebcdicScore * 100) + "%");
+            result.put("asciiScore", Math.round(detection.asciiScore * 100) + "%");
+        } catch (IOException e) {
+            result.put("error", "Cannot analyze file: " + e.getMessage());
+        }
     }
     
     private void handleExportIssues(HttpServletRequest req, HttpServletResponse resp) throws IOException {
