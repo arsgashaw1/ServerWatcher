@@ -5,6 +5,7 @@ import com.logdashboard.config.ServerPath;
 import com.logdashboard.model.LogIssue;
 import com.logdashboard.parser.LogParser;
 import com.logdashboard.util.EncodingDetector;
+import com.logdashboard.util.IconvConverter;
 
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -31,6 +32,8 @@ public class LogFileWatcher {
     private final Map<Path, Integer> fileLineNumbers;
     private final Map<Path, String> fileServerNames;  // Maps file path to server name
     private final Map<Path, Charset> fileCharsets;    // Maps file path to charset (for EBCDIC support)
+    private final Map<Path, String> fileIconvEncodings;  // Maps file path to iconv encoding name
+    private final Map<Path, Boolean> fileUseIconv;    // Whether to use iconv for conversion
     private final ScheduledExecutorService scheduler;
     private final List<Pattern> filePatterns;
     
@@ -49,6 +52,8 @@ public class LogFileWatcher {
         this.fileLineNumbers = new ConcurrentHashMap<>();
         this.fileServerNames = new ConcurrentHashMap<>();
         this.fileCharsets = new ConcurrentHashMap<>();
+        this.fileIconvEncodings = new ConcurrentHashMap<>();
+        this.fileUseIconv = new ConcurrentHashMap<>();
         this.dynamicServerPaths = Collections.synchronizedList(new ArrayList<>());
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "LogFileWatcher");
@@ -128,10 +133,17 @@ public class LogFileWatcher {
      * Performs initial scan of all watched directories.
      */
     private void initialScan() {
+        // Check iconv availability at startup
+        if (IconvConverter.isIconvAvailable()) {
+            updateStatus("iconv command is available for encoding conversion");
+        } else {
+            updateStatus("iconv command not available, using Java charset handling");
+        }
+        
         // Scan legacy watch paths (no server name)
         if (config.getWatchPaths() != null) {
             for (String pathStr : config.getWatchPaths()) {
-                scanPath(pathStr, null, StandardCharsets.UTF_8);
+                scanPath(pathStr, null, StandardCharsets.UTF_8, null, false);
             }
         }
         
@@ -141,15 +153,18 @@ public class LogFileWatcher {
                 String serverName = server.getServerName();
                 String pathStr = server.getPath();
                 Charset charset = server.getCharset();
+                String iconvEncoding = server.getIconvEncoding();
+                boolean useIconv = server.isUseIconv();
                 String encodingInfo = server.getEncoding() != null ? 
-                    " [" + server.getEncoding() + "]" : "";
+                    " [" + server.getEncoding() + (useIconv ? "/iconv" : "") + "]" : "";
                 updateStatus("Scanning server: " + serverName + " -> " + pathStr + encodingInfo);
-                scanPath(pathStr, serverName, charset);
+                scanPath(pathStr, serverName, charset, iconvEncoding, useIconv);
             }
         }
     }
     
-    private void scanPath(String pathStr, String serverName, Charset charset) {
+    private void scanPath(String pathStr, String serverName, Charset charset, 
+                          String iconvEncoding, boolean useIconv) {
         Path watchPath = Paths.get(pathStr);
         
         if (!Files.exists(watchPath)) {
@@ -164,12 +179,12 @@ public class LogFileWatcher {
                 try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
                     for (Path file : stream) {
                         if (Files.isRegularFile(file) && matchesFilePattern(file)) {
-                            initializeFile(file, serverName, charset);
+                            initializeFile(file, serverName, charset, iconvEncoding, useIconv);
                         }
                     }
                 }
             } else if (Files.isRegularFile(watchPath)) {
-                initializeFile(watchPath, serverName, charset);
+                initializeFile(watchPath, serverName, charset, iconvEncoding, useIconv);
             }
         } catch (IOException e) {
             updateStatus("Error scanning path: " + pathStr + " - " + e.getMessage());
@@ -180,17 +195,21 @@ public class LogFileWatcher {
      * Initializes tracking for a file (sets position to end of file).
      * If charset is UTF-8 (the default), attempts to auto-detect encoding.
      */
-    private void initializeFile(Path file, String serverName, Charset charset) {
+    private void initializeFile(Path file, String serverName, Charset charset, 
+                                String iconvEncoding, boolean useIconv) {
         try {
             // Auto-detect encoding if not explicitly configured (UTF-8 is the default)
             Charset effectiveCharset = charset;
+            String effectiveIconvEncoding = iconvEncoding;
+            boolean effectiveUseIconv = useIconv;
             boolean autoDetected = false;
             
-            if (StandardCharsets.UTF_8.equals(charset)) {
+            if (StandardCharsets.UTF_8.equals(charset) && iconvEncoding == null) {
                 // Try to auto-detect encoding
                 EncodingDetector.EncodingResult detection = EncodingDetector.detectEncodingWithDetails(file);
                 if (detection.isEbcdic() && detection.confidence > 0.5) {
                     effectiveCharset = detection.charset;
+                    effectiveIconvEncoding = IconvConverter.javaCharsetToIconvEncoding(effectiveCharset);
                     autoDetected = true;
                     updateStatus(String.format("Auto-detected EBCDIC encoding for %s (confidence: %.0f%%)",
                         file.getFileName(), detection.confidence * 100));
@@ -198,20 +217,26 @@ public class LogFileWatcher {
             }
             
             long size = Files.size(file);
-            int lineCount = countLines(file, effectiveCharset);
+            int lineCount = countLines(file, effectiveCharset, effectiveIconvEncoding, effectiveUseIconv);
             filePositions.put(file, size);
             fileLineNumbers.put(file, lineCount);
             if (serverName != null) {
                 fileServerNames.put(file, serverName);
             }
             fileCharsets.put(file, effectiveCharset);
+            if (effectiveIconvEncoding != null) {
+                fileIconvEncodings.put(file, effectiveIconvEncoding);
+            }
+            fileUseIconv.put(file, effectiveUseIconv);
             
             String serverInfo = serverName != null ? " [" + serverName + "]" : "";
             String charsetInfo = "";
             if (!StandardCharsets.UTF_8.equals(effectiveCharset)) {
+                String encodingName = effectiveUseIconv && effectiveIconvEncoding != null ? 
+                    effectiveIconvEncoding + "/iconv" : effectiveCharset.displayName();
                 charsetInfo = autoDetected ? 
-                    " (auto-detected: " + effectiveCharset.displayName() + ")" :
-                    " (" + effectiveCharset.displayName() + ")";
+                    " (auto-detected: " + encodingName + ")" :
+                    " (" + encodingName + ")";
             }
             updateStatus("Tracking: " + file.getFileName() + serverInfo + charsetInfo);
         } catch (IOException e) {
@@ -225,6 +250,10 @@ public class LogFileWatcher {
                     fileServerNames.put(file, serverName);
                 }
                 fileCharsets.put(file, charset);
+                if (iconvEncoding != null) {
+                    fileIconvEncodings.put(file, iconvEncoding);
+                }
+                fileUseIconv.put(file, useIconv);
                 String serverInfo = serverName != null ? " [" + serverName + "]" : "";
                 updateStatus("Tracking: " + file.getFileName() + serverInfo);
             } catch (IOException ex) {
@@ -239,6 +268,22 @@ public class LogFileWatcher {
      * Uses the specified charset to handle various encodings including EBCDIC.
      */
     private int countLines(Path file, Charset charset) throws IOException {
+        return countLines(file, charset, null, false);
+    }
+    
+    /**
+     * Counts the number of lines in a file.
+     * Supports iconv-based conversion for better EBCDIC compatibility.
+     */
+    private int countLines(Path file, Charset charset, String iconvEncoding, boolean useIconv) 
+            throws IOException {
+        if (useIconv && iconvEncoding != null && IconvConverter.isIconvAvailable()) {
+            // Use iconv for conversion
+            String[] lines = IconvConverter.readEbcdicFileLines(file, iconvEncoding);
+            return lines.length;
+        }
+        
+        // Use Java's built-in charset handling
         int count = 0;
         try (BufferedReader reader = Files.newBufferedReader(file, charset)) {
             while (reader.readLine() != null) {
@@ -261,21 +306,23 @@ public class LogFileWatcher {
         // Poll legacy watch paths
         if (config.getWatchPaths() != null) {
             for (String pathStr : config.getWatchPaths()) {
-                pollPath(pathStr, null, StandardCharsets.UTF_8, currentFiles);
+                pollPath(pathStr, null, StandardCharsets.UTF_8, null, false, currentFiles);
             }
         }
         
         // Poll server-based paths from initial config
         if (config.getServers() != null) {
             for (ServerPath server : config.getServers()) {
-                pollPath(server.getPath(), server.getServerName(), server.getCharset(), currentFiles);
+                pollPath(server.getPath(), server.getServerName(), server.getCharset(), 
+                         server.getIconvEncoding(), server.isUseIconv(), currentFiles);
             }
         }
         
         // Poll dynamically added server paths (from hot reload)
         synchronized (dynamicServerPaths) {
             for (ServerPath server : dynamicServerPaths) {
-                pollPath(server.getPath(), server.getServerName(), server.getCharset(), currentFiles);
+                pollPath(server.getPath(), server.getServerName(), server.getCharset(),
+                         server.getIconvEncoding(), server.isUseIconv(), currentFiles);
             }
         }
         
@@ -284,12 +331,15 @@ public class LogFileWatcher {
             if (!filePositions.containsKey(file)) {
                 String serverName = fileServerNames.get(file);
                 Charset charset = fileCharsets.getOrDefault(file, StandardCharsets.UTF_8);
-                initializeFile(file, serverName, charset);
+                String iconvEncoding = fileIconvEncodings.get(file);
+                boolean useIconv = fileUseIconv.getOrDefault(file, false);
+                initializeFile(file, serverName, charset, iconvEncoding, useIconv);
             }
         }
     }
     
-    private void pollPath(String pathStr, String serverName, Charset charset, Set<Path> currentFiles) {
+    private void pollPath(String pathStr, String serverName, Charset charset, 
+                          String iconvEncoding, boolean useIconv, Set<Path> currentFiles) {
         Path watchPath = Paths.get(pathStr);
         
         try {
@@ -304,6 +354,12 @@ public class LogFileWatcher {
                             if (!fileCharsets.containsKey(file)) {
                                 fileCharsets.put(file, charset);
                             }
+                            if (iconvEncoding != null && !fileIconvEncodings.containsKey(file)) {
+                                fileIconvEncodings.put(file, iconvEncoding);
+                            }
+                            if (!fileUseIconv.containsKey(file)) {
+                                fileUseIconv.put(file, useIconv);
+                            }
                             checkFileForChanges(file);
                         }
                     }
@@ -315,6 +371,12 @@ public class LogFileWatcher {
                 }
                 if (!fileCharsets.containsKey(watchPath)) {
                     fileCharsets.put(watchPath, charset);
+                }
+                if (iconvEncoding != null && !fileIconvEncodings.containsKey(watchPath)) {
+                    fileIconvEncodings.put(watchPath, iconvEncoding);
+                }
+                if (!fileUseIconv.containsKey(watchPath)) {
+                    fileUseIconv.put(watchPath, useIconv);
                 }
                 checkFileForChanges(watchPath);
             }
@@ -334,10 +396,12 @@ public class LogFileWatcher {
             int lastLineNumber = fileLineNumbers.getOrDefault(file, 0);
             String serverName = fileServerNames.get(file);
             Charset charset = fileCharsets.getOrDefault(file, StandardCharsets.UTF_8);
+            String iconvEncoding = fileIconvEncodings.get(file);
+            boolean useIconv = fileUseIconv.getOrDefault(file, false);
             
             if (currentSize > lastPosition) {
                 // File has grown - read new content
-                List<String> newLines = readNewLines(file, lastPosition, charset);
+                List<String> newLines = readNewLines(file, lastPosition, charset, iconvEncoding, useIconv);
                 
                 if (!newLines.isEmpty()) {
                     List<LogIssue> issues = parser.parseLines(
@@ -361,7 +425,7 @@ public class LogFileWatcher {
                 updateStatus("File rotated: " + file.getFileName() + serverInfo);
                 filePositions.put(file, currentSize);
                 try {
-                    fileLineNumbers.put(file, countLines(file, charset));
+                    fileLineNumbers.put(file, countLines(file, charset, iconvEncoding, useIconv));
                 } catch (IOException countError) {
                     // If we can't count lines, just reset to 0
                     fileLineNumbers.put(file, 0);
@@ -377,6 +441,15 @@ public class LogFileWatcher {
      * Supports various encodings including EBCDIC.
      */
     private List<String> readNewLines(Path file, long startPosition, Charset charset) throws IOException {
+        return readNewLines(file, startPosition, charset, null, false);
+    }
+    
+    /**
+     * Reads new lines from a file starting from a given position.
+     * Supports iconv-based conversion for better EBCDIC compatibility.
+     */
+    private List<String> readNewLines(Path file, long startPosition, Charset charset,
+                                      String iconvEncoding, boolean useIconv) throws IOException {
         List<String> lines = new ArrayList<>();
         
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
@@ -396,10 +469,23 @@ public class LogFileWatcher {
             while (channel.read(buffer) > 0) {
                 buffer.flip();
                 
-                // Decode bytes using the specified charset
+                // Decode bytes using the specified charset or iconv
                 byte[] bytes = new byte[buffer.remaining()];
                 buffer.get(bytes);
-                String content = new String(bytes, charset);
+                
+                String content;
+                if (useIconv && iconvEncoding != null && IconvConverter.isIconvAvailable()) {
+                    // Use iconv for conversion (better IBM mainframe compatibility)
+                    try {
+                        content = IconvConverter.convertToUtf8(bytes, iconvEncoding);
+                    } catch (IOException e) {
+                        // Fall back to Java charset if iconv fails
+                        content = new String(bytes, charset);
+                    }
+                } else {
+                    // Use Java's built-in charset handling
+                    content = new String(bytes, charset);
+                }
                 
                 // Split into lines
                 for (int i = 0; i < content.length(); i++) {
@@ -473,6 +559,8 @@ public class LogFileWatcher {
         fileLineNumbers.clear();
         fileServerNames.clear();
         fileCharsets.clear();
+        fileIconvEncodings.clear();
+        fileUseIconv.clear();
         initialScan();
     }
     
@@ -493,13 +581,16 @@ public class LogFileWatcher {
             String serverName = server.getServerName();
             String pathStr = server.getPath();
             Charset charset = server.getCharset();
+            String iconvEncoding = server.getIconvEncoding();
+            boolean useIconv = server.isUseIconv();
             
             if (pathStr == null || pathStr.isEmpty()) {
                 continue;
             }
             
             String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-            String encodingInfo = server.getEncoding() != null ? " (" + server.getEncoding() + ")" : "";
+            String encodingInfo = server.getEncoding() != null ? 
+                " (" + server.getEncoding() + (useIconv ? "/iconv" : "") + ")" : "";
             updateStatus("Adding new server path: " + pathStr + serverInfo + encodingInfo);
             
             // Add to dynamic server paths list so pollFiles() will monitor it
@@ -507,7 +598,7 @@ public class LogFileWatcher {
             addedCount++;
             
             // Scan the new path for initial file discovery
-            scanPath(pathStr, serverName, charset);
+            scanPath(pathStr, serverName, charset, iconvEncoding, useIconv);
         }
         
         if (addedCount > 0) {
@@ -522,7 +613,7 @@ public class LogFileWatcher {
      * @param path The path to watch
      */
     public void addServerPath(String serverName, String path) {
-        addServerPath(serverName, path, null);
+        addServerPath(serverName, path, null, false);
     }
     
     /**
@@ -530,23 +621,36 @@ public class LogFileWatcher {
      * 
      * @param serverName The server name (can be null for legacy paths)
      * @param path The path to watch
-     * @param encoding The character encoding (e.g., "UTF-8", "EBCDIC", "Cp1047")
+     * @param encoding The character encoding (e.g., "UTF-8", "EBCDIC", "Cp1047", "IBM-1047")
      */
     public void addServerPath(String serverName, String path, String encoding) {
+        addServerPath(serverName, path, encoding, false);
+    }
+    
+    /**
+     * Adds a single server path to watch dynamically with custom encoding and iconv option.
+     * 
+     * @param serverName The server name (can be null for legacy paths)
+     * @param path The path to watch
+     * @param encoding The character encoding (e.g., "UTF-8", "EBCDIC", "Cp1047", "IBM-1047")
+     * @param useIconv Whether to use external iconv command for encoding conversion
+     */
+    public void addServerPath(String serverName, String path, String encoding, boolean useIconv) {
         if (path == null || path.isEmpty()) {
             return;
         }
         
-        ServerPath server = new ServerPath(serverName, path, null, encoding);
+        ServerPath server = new ServerPath(serverName, path, null, encoding, useIconv);
         String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-        String encodingInfo = encoding != null ? " (" + encoding + ")" : "";
+        String encodingInfo = encoding != null ? 
+            " (" + encoding + (useIconv ? "/iconv" : "") + ")" : "";
         updateStatus("Adding new server path: " + path + serverInfo + encodingInfo);
         
         // Add to dynamic server paths list so pollFiles() will monitor it
         dynamicServerPaths.add(server);
         
         // Scan the new path for initial file discovery
-        scanPath(path, serverName, server.getCharset());
+        scanPath(path, serverName, server.getCharset(), server.getIconvEncoding(), useIconv);
         
         updateStatus("Now watching " + getTotalWatchPaths() + " path(s)");
     }

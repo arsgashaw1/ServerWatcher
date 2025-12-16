@@ -191,6 +191,7 @@ java -jar log-issue-dashboard.jar ./config 9090
 | `path` | string | required | Path to log directory or file |
 | `description` | string | `null` | Optional description |
 | `encoding` | string | `UTF-8` | Character encoding for log files |
+| `useIconv` | boolean | `false` | Use external `iconv` command for encoding conversion |
 
 ### EBCDIC and Character Encoding Support
 
@@ -234,6 +235,69 @@ The dashboard supports various character encodings for log files, including EBCD
     }
   ]
 }
+```
+
+#### Using External `iconv` for IBM Encoding Conversion
+
+For better compatibility with IBM mainframe log files, you can use the system's `iconv` command for encoding conversion instead of Java's built-in charset handling. This can provide more accurate conversion for certain EBCDIC code pages.
+
+**When to use `iconv`:**
+- When Java's charset handling produces garbled output
+- When dealing with complex IBM mainframe encodings
+- When you need to match the exact behavior of `iconv -f IBM-1047 -t UTF-8`
+
+**Prerequisites:**
+- The `iconv` command must be available on the system
+- The dashboard will automatically fall back to Java charset handling if `iconv` is not available
+
+**Configuration with iconv:**
+
+```json
+{
+  "servers": [
+    {
+      "serverName": "MAINFRAME-ZOS",
+      "path": "/zos/logs",
+      "description": "z/OS Unix logs using iconv for IBM-1047 conversion",
+      "encoding": "IBM-1047",
+      "useIconv": true
+    },
+    {
+      "serverName": "MAINFRAME-US",
+      "path": "/mainframe/us/logs",
+      "description": "US Mainframe logs using iconv",
+      "encoding": "IBM-037",
+      "useIconv": true
+    }
+  ]
+}
+```
+
+**iconv Encoding Names:**
+
+When using `useIconv: true`, use iconv-compatible encoding names:
+
+| iconv Name | Java Charset | Description |
+|------------|--------------|-------------|
+| `IBM-1047` | Cp1047 | z/OS Unix (most common for z/OS) |
+| `IBM-037` | Cp037 | US/Canada EBCDIC |
+| `IBM-500` | Cp500 | International EBCDIC |
+| `IBM-1148` | Cp1148 | Latin-1 with Euro sign |
+| `ISO8859-1` | ISO-8859-1 | Latin-1 |
+
+**Testing iconv conversion:**
+
+You can test iconv conversion on the command line:
+
+```bash
+# Convert from IBM-1047 (EBCDIC) to UTF-8
+iconv -f IBM-1047 -t UTF-8 < ebcdic_file.log > utf8_output.log
+
+# Convert from ISO8859-1 to IBM-1047 (for writing EBCDIC)
+iconv -f ISO8859-1 -t IBM-1047 < latin1_file.txt > ebcdic_output.txt
+
+# List available encodings on your system
+iconv -l | grep IBM
 ```
 
 ## API Examples

@@ -1,0 +1,394 @@
+package com.logdashboard.util;
+
+import java.io.*;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Utility class for encoding conversion using the system's iconv command.
+ * 
+ * This is particularly useful for IBM mainframe encodings (EBCDIC) where the
+ * system's iconv may provide better compatibility than Java's built-in charset handling.
+ * 
+ * Common conversions:
+ * - IBM-1047 (EBCDIC Unix/z/OS) -> UTF-8
+ * - ISO8859-1 -> IBM-1047 (for writing EBCDIC)
+ * - Cp037 (EBCDIC US/Canada) -> UTF-8
+ * 
+ * Usage:
+ * <pre>
+ *   IconvConverter.convertFileToUtf8(path, "IBM-1047");
+ *   String text = IconvConverter.convertToUtf8(bytes, "IBM-1047");
+ * </pre>
+ */
+public class IconvConverter {
+    
+    // iconv encoding names for IBM mainframe code pages
+    public static final String ICONV_EBCDIC_1047 = "IBM-1047";    // z/OS Unix
+    public static final String ICONV_EBCDIC_037 = "IBM-037";      // US/Canada
+    public static final String ICONV_EBCDIC_500 = "IBM-500";      // International
+    public static final String ICONV_EBCDIC_1148 = "IBM-1148";    // Latin-1 with Euro
+    public static final String ICONV_ISO8859_1 = "ISO8859-1";     // Latin-1
+    public static final String ICONV_UTF8 = "UTF-8";
+    
+    // Timeout for iconv process (seconds)
+    private static final int ICONV_TIMEOUT_SECONDS = 30;
+    
+    // Cache iconv availability check
+    private static Boolean iconvAvailable = null;
+    
+    /**
+     * Checks if the iconv command is available on this system.
+     */
+    public static synchronized boolean isIconvAvailable() {
+        if (iconvAvailable == null) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder("iconv", "--version");
+                pb.redirectErrorStream(true);
+                Process process = pb.start();
+                boolean completed = process.waitFor(5, TimeUnit.SECONDS);
+                iconvAvailable = completed && process.exitValue() == 0;
+            } catch (Exception e) {
+                iconvAvailable = false;
+            }
+        }
+        return iconvAvailable;
+    }
+    
+    /**
+     * Converts a file from a source encoding to UTF-8 using iconv.
+     * 
+     * @param inputPath Path to the input file
+     * @param fromEncoding Source encoding (e.g., "IBM-1047")
+     * @return The converted content as a UTF-8 string
+     * @throws IOException if conversion fails
+     */
+    public static String convertFileToUtf8(Path inputPath, String fromEncoding) throws IOException {
+        if (!isIconvAvailable()) {
+            return convertFileToUtf8Fallback(inputPath, fromEncoding);
+        }
+        
+        ProcessBuilder pb = new ProcessBuilder(
+            "iconv",
+            "-f", fromEncoding,
+            "-t", ICONV_UTF8,
+            inputPath.toString()
+        );
+        
+        return executeIconvProcess(pb);
+    }
+    
+    /**
+     * Converts bytes from a source encoding to UTF-8 using iconv.
+     * 
+     * @param data The bytes to convert
+     * @param fromEncoding Source encoding (e.g., "IBM-1047")
+     * @return The converted content as a UTF-8 string
+     * @throws IOException if conversion fails
+     */
+    public static String convertToUtf8(byte[] data, String fromEncoding) throws IOException {
+        if (!isIconvAvailable()) {
+            return convertToUtf8Fallback(data, fromEncoding);
+        }
+        
+        ProcessBuilder pb = new ProcessBuilder(
+            "iconv",
+            "-f", fromEncoding,
+            "-t", ICONV_UTF8
+        );
+        
+        return executeIconvProcessWithInput(pb, data);
+    }
+    
+    /**
+     * Converts a UTF-8 string to IBM-1047 (EBCDIC) encoding.
+     * This is useful for writing EBCDIC files.
+     * 
+     * @param text The UTF-8 text to convert
+     * @return The bytes in IBM-1047 encoding
+     * @throws IOException if conversion fails
+     */
+    public static byte[] convertUtf8ToEbcdic(String text) throws IOException {
+        return convertUtf8ToEbcdic(text, ICONV_EBCDIC_1047);
+    }
+    
+    /**
+     * Converts a UTF-8 string to a specified EBCDIC encoding.
+     * 
+     * @param text The UTF-8 text to convert
+     * @param toEncoding Target EBCDIC encoding (e.g., "IBM-1047")
+     * @return The bytes in the target encoding
+     * @throws IOException if conversion fails
+     */
+    public static byte[] convertUtf8ToEbcdic(String text, String toEncoding) throws IOException {
+        if (!isIconvAvailable()) {
+            return convertUtf8ToEbcdicFallback(text, toEncoding);
+        }
+        
+        ProcessBuilder pb = new ProcessBuilder(
+            "iconv",
+            "-f", ICONV_UTF8,
+            "-t", toEncoding
+        );
+        
+        return executeIconvProcessWithInputGetBytes(pb, text.getBytes(StandardCharsets.UTF_8));
+    }
+    
+    /**
+     * Converts from ISO8859-1 to IBM-1047 (for mainframe compatibility).
+     * This matches the command: iconv -f ISO8859-1 -t IBM-1047
+     * 
+     * @param data The ISO8859-1 bytes
+     * @return The bytes in IBM-1047 encoding
+     * @throws IOException if conversion fails
+     */
+    public static byte[] convertIso8859ToEbcdic(byte[] data) throws IOException {
+        if (!isIconvAvailable()) {
+            return convertIso8859ToEbcdicFallback(data);
+        }
+        
+        ProcessBuilder pb = new ProcessBuilder(
+            "iconv",
+            "-f", ICONV_ISO8859_1,
+            "-t", ICONV_EBCDIC_1047
+        );
+        
+        return executeIconvProcessWithInputGetBytes(pb, data);
+    }
+    
+    /**
+     * Reads an EBCDIC file and returns lines as UTF-8 strings.
+     * 
+     * @param filePath Path to the EBCDIC file
+     * @param ebcdicEncoding EBCDIC encoding name (e.g., "IBM-1047")
+     * @return Array of lines in UTF-8
+     * @throws IOException if reading fails
+     */
+    public static String[] readEbcdicFileLines(Path filePath, String ebcdicEncoding) throws IOException {
+        String content = convertFileToUtf8(filePath, ebcdicEncoding);
+        return content.split("\\r?\\n");
+    }
+    
+    /**
+     * Reads a portion of an EBCDIC file (for tailing).
+     * 
+     * @param filePath Path to the EBCDIC file
+     * @param startPosition Starting byte position
+     * @param ebcdicEncoding EBCDIC encoding name
+     * @return The content as UTF-8 string
+     * @throws IOException if reading fails
+     */
+    public static String readEbcdicFilePortion(Path filePath, long startPosition, String ebcdicEncoding) 
+            throws IOException {
+        // Read bytes from the position
+        byte[] allBytes = Files.readAllBytes(filePath);
+        if (startPosition >= allBytes.length) {
+            return "";
+        }
+        
+        int length = (int) (allBytes.length - startPosition);
+        byte[] portion = new byte[length];
+        System.arraycopy(allBytes, (int) startPosition, portion, 0, length);
+        
+        return convertToUtf8(portion, ebcdicEncoding);
+    }
+    
+    /**
+     * Maps Java charset names to iconv encoding names.
+     */
+    public static String javaCharsetToIconvEncoding(Charset charset) {
+        String name = charset.name().toUpperCase();
+        
+        switch (name) {
+            case "CP1047":
+            case "IBM1047":
+                return ICONV_EBCDIC_1047;
+            case "CP037":
+            case "IBM037":
+                return ICONV_EBCDIC_037;
+            case "CP500":
+            case "IBM500":
+                return ICONV_EBCDIC_500;
+            case "CP1148":
+            case "IBM1148":
+                return ICONV_EBCDIC_1148;
+            case "ISO-8859-1":
+            case "ISO8859-1":
+            case "LATIN1":
+                return ICONV_ISO8859_1;
+            case "UTF-8":
+                return ICONV_UTF8;
+            default:
+                // Return as-is, iconv might understand it
+                return name;
+        }
+    }
+    
+    /**
+     * Maps iconv encoding names to Java Charset.
+     */
+    public static Charset iconvEncodingToJavaCharset(String iconvEncoding) {
+        String upper = iconvEncoding.toUpperCase().replace("-", "").replace("_", "");
+        
+        switch (upper) {
+            case "IBM1047":
+            case "EBCDIC1047":
+                return Charset.forName("Cp1047");
+            case "IBM037":
+            case "EBCDIC037":
+                return Charset.forName("Cp037");
+            case "IBM500":
+            case "EBCDIC500":
+                return Charset.forName("Cp500");
+            case "IBM1148":
+            case "EBCDIC1148":
+                return Charset.forName("Cp1148");
+            case "ISO88591":
+            case "LATIN1":
+                return StandardCharsets.ISO_8859_1;
+            case "UTF8":
+                return StandardCharsets.UTF_8;
+            default:
+                try {
+                    return Charset.forName(iconvEncoding);
+                } catch (Exception e) {
+                    return StandardCharsets.UTF_8;
+                }
+        }
+    }
+    
+    // === Private helper methods ===
+    
+    private static String executeIconvProcess(ProcessBuilder pb) throws IOException {
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+        
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (output.length() > 0) {
+                    output.append("\n");
+                }
+                output.append(line);
+            }
+            
+            boolean completed = process.waitFor(ICONV_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                throw new IOException("iconv process timed out");
+            }
+            
+            if (process.exitValue() != 0) {
+                throw new IOException("iconv failed with exit code: " + process.exitValue());
+            }
+            
+            return output.toString();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("iconv process interrupted", e);
+        }
+    }
+    
+    private static String executeIconvProcessWithInput(ProcessBuilder pb, byte[] input) throws IOException {
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+        
+        // Write input to process stdin
+        try (OutputStream os = process.getOutputStream()) {
+            os.write(input);
+            os.flush();
+        }
+        
+        // Read output
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (output.length() > 0) {
+                    output.append("\n");
+                }
+                output.append(line);
+            }
+            
+            boolean completed = process.waitFor(ICONV_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                throw new IOException("iconv process timed out");
+            }
+            
+            if (process.exitValue() != 0) {
+                throw new IOException("iconv failed with exit code: " + process.exitValue());
+            }
+            
+            return output.toString();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("iconv process interrupted", e);
+        }
+    }
+    
+    private static byte[] executeIconvProcessWithInputGetBytes(ProcessBuilder pb, byte[] input) throws IOException {
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+        
+        // Write input to process stdin
+        try (OutputStream os = process.getOutputStream()) {
+            os.write(input);
+            os.flush();
+        }
+        
+        // Read output as bytes
+        try (InputStream is = process.getInputStream();
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = is.read(buffer)) != -1) {
+                baos.write(buffer, 0, bytesRead);
+            }
+            
+            boolean completed = process.waitFor(ICONV_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                throw new IOException("iconv process timed out");
+            }
+            
+            if (process.exitValue() != 0) {
+                throw new IOException("iconv failed with exit code: " + process.exitValue());
+            }
+            
+            return baos.toByteArray();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("iconv process interrupted", e);
+        }
+    }
+    
+    // === Fallback methods using Java's built-in charset handling ===
+    
+    private static String convertFileToUtf8Fallback(Path inputPath, String fromEncoding) throws IOException {
+        Charset charset = iconvEncodingToJavaCharset(fromEncoding);
+        return new String(Files.readAllBytes(inputPath), charset);
+    }
+    
+    private static String convertToUtf8Fallback(byte[] data, String fromEncoding) {
+        Charset charset = iconvEncodingToJavaCharset(fromEncoding);
+        return new String(data, charset);
+    }
+    
+    private static byte[] convertUtf8ToEbcdicFallback(String text, String toEncoding) {
+        Charset charset = iconvEncodingToJavaCharset(toEncoding);
+        return text.getBytes(charset);
+    }
+    
+    private static byte[] convertIso8859ToEbcdicFallback(byte[] data) {
+        // Convert ISO-8859-1 bytes to String, then to EBCDIC
+        String text = new String(data, StandardCharsets.ISO_8859_1);
+        return text.getBytes(Charset.forName("Cp1047"));
+    }
+}
