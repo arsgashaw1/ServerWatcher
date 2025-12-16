@@ -181,16 +181,31 @@ public class LogFileWatcher {
             String serverInfo = serverName != null ? " [" + serverName + "]" : "";
             updateStatus("Tracking: " + file.getFileName() + serverInfo);
         } catch (IOException e) {
-            updateStatus("Error initializing file: " + file + " - " + e.getMessage());
+            // If we can't read the file properly (e.g., encoding issues), 
+            // still track it starting from the current position
+            try {
+                long size = Files.size(file);
+                filePositions.put(file, size);
+                fileLineNumbers.put(file, 0);  // Start from line 0 if we can't count
+                if (serverName != null) {
+                    fileServerNames.put(file, serverName);
+                }
+                String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+                updateStatus("Tracking: " + file.getFileName() + serverInfo);
+            } catch (IOException ex) {
+                // Only log error if we truly can't access the file
+                updateStatus("Error initializing file: " + file + " - " + ex.getMessage());
+            }
         }
     }
     
     /**
      * Counts the number of lines in a file.
+     * Uses ISO-8859-1 encoding to handle files with ANSI escape codes or other special characters.
      */
     private int countLines(Path file) throws IOException {
         int count = 0;
-        try (BufferedReader reader = Files.newBufferedReader(file)) {
+        try (BufferedReader reader = Files.newBufferedReader(file, java.nio.charset.StandardCharsets.ISO_8859_1)) {
             while (reader.readLine() != null) {
                 count++;
             }
@@ -302,7 +317,12 @@ public class LogFileWatcher {
                 String serverInfo = serverName != null ? " [" + serverName + "]" : "";
                 updateStatus("File rotated: " + file.getFileName() + serverInfo);
                 filePositions.put(file, currentSize);
-                fileLineNumbers.put(file, countLines(file));
+                try {
+                    fileLineNumbers.put(file, countLines(file));
+                } catch (IOException countError) {
+                    // If we can't count lines, just reset to 0
+                    fileLineNumbers.put(file, 0);
+                }
             }
         } catch (IOException e) {
             System.err.println("Error checking file: " + file + " - " + e.getMessage());
