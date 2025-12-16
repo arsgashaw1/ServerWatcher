@@ -14,6 +14,18 @@
       "serverName": "U3172DEV",
       "path": "/u/dev/logs",
       "description": "Development Server logs"
+    },
+    {
+      "serverName": "MAINFRAME-US",
+      "path": "/mainframe/logs",
+      "description": "IBM Mainframe US logs (EBCDIC)",
+      "encoding": "EBCDIC"
+    },
+    {
+      "serverName": "MAINFRAME-ZOS",
+      "path": "/zos/logs",
+      "description": "z/OS Unix logs (EBCDIC-1047)",
+      "encoding": "Cp1047"
     }
   ],
   "watchPaths": [],

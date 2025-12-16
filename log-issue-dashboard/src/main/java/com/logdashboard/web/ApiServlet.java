@@ -13,6 +13,11 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 
 /**
@@ -43,9 +48,17 @@ public class ApiServlet extends HttpServlet {
             pathInfo = "/";
         }
         
+        resp.setHeader("Access-Control-Allow-Origin", "*");
+        
+        // Handle export separately to set correct content-type BEFORE getting writer
+        if ("/export".equals(pathInfo)) {
+            handleExportIssues(req, resp);
+            return;
+        }
+        
+        // For all other endpoints, use JSON
         resp.setContentType("application/json");
         resp.setCharacterEncoding("UTF-8");
-        resp.setHeader("Access-Control-Allow-Origin", "*");
         
         PrintWriter out = resp.getWriter();
         
@@ -74,6 +87,9 @@ public class ApiServlet extends HttpServlet {
                     break;
                 case "/health":
                     handleHealthCheck(out);
+                    break;
+                case "/daterange":
+                    handleGetDateRange(out);
                     break;
                 default:
                     if (pathInfo.startsWith("/issues/")) {
@@ -137,30 +153,64 @@ public class ApiServlet extends HttpServlet {
         int limit = getIntParam(req, "limit", 100);
         String severity = req.getParameter("severity");
         String server = req.getParameter("server");
+        String fromDate = req.getParameter("from");
+        String toDate = req.getParameter("to");
         
-        List<LogIssue> issues;
-        
+        // Parse severity
+        LogIssue.Severity sev = null;
         if (severity != null && !severity.isEmpty()) {
             try {
-                LogIssue.Severity sev = LogIssue.Severity.valueOf(severity.toUpperCase());
-                issues = issueStore.getIssuesBySeverity(sev);
+                sev = LogIssue.Severity.valueOf(severity.toUpperCase());
             } catch (IllegalArgumentException e) {
-                issues = issueStore.getIssues(offset, limit);
+                // Ignore invalid severity
             }
-        } else if (server != null && !server.isEmpty()) {
-            issues = issueStore.getIssuesByServer(server);
-        } else {
-            issues = issueStore.getIssues(offset, limit);
         }
+        
+        // Parse date range
+        LocalDateTime from = parseDateTime(fromDate, true);
+        LocalDateTime to = parseDateTime(toDate, false);
+        
+        // Get filtered issues
+        List<LogIssue> issues = issueStore.getFilteredIssues(sev, server, from, to, offset, limit);
+        long totalFiltered = issueStore.getFilteredIssuesCount(sev, server, from, to);
         
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("total", issueStore.getCurrentIssuesCount());
+        response.put("totalFiltered", totalFiltered);
         response.put("offset", offset);
         response.put("limit", limit);
         response.put("count", issues.size());
+        response.put("hasMore", offset + issues.size() < totalFiltered);
         response.put("issues", issues.stream().map(this::issueToMap).toArray());
         
+        // Add filter info
+        Map<String, Object> filters = new LinkedHashMap<>();
+        filters.put("severity", severity);
+        filters.put("server", server);
+        filters.put("from", fromDate);
+        filters.put("to", toDate);
+        response.put("filters", filters);
+        
         out.write(GSON.toJson(response));
+    }
+    
+    private LocalDateTime parseDateTime(String dateStr, boolean startOfDay) {
+        if (dateStr == null || dateStr.isEmpty()) {
+            return null;
+        }
+        
+        try {
+            // Try parsing as full datetime (yyyy-MM-ddTHH:mm:ss)
+            return LocalDateTime.parse(dateStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        } catch (DateTimeParseException e1) {
+            try {
+                // Try parsing as date only (yyyy-MM-dd)
+                LocalDate date = LocalDate.parse(dateStr, DateTimeFormatter.ISO_LOCAL_DATE);
+                return startOfDay ? date.atStartOfDay() : date.atTime(LocalTime.MAX);
+            } catch (DateTimeParseException e2) {
+                return null;
+            }
+        }
     }
     
     private void handleGetRecentIssues(HttpServletRequest req, PrintWriter out) {
@@ -233,6 +283,92 @@ public class ApiServlet extends HttpServlet {
         health.put("timestamp", System.currentTimeMillis());
         health.put("issueCount", issueStore.getCurrentIssuesCount());
         out.write(GSON.toJson(health));
+    }
+    
+    private void handleGetDateRange(PrintWriter out) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        Map<String, Object> dateRange = new LinkedHashMap<>();
+        
+        issueStore.getEarliestIssueTime().ifPresentOrElse(
+                earliest -> dateRange.put("earliest", earliest.format(formatter)),
+                () -> dateRange.put("earliest", null)
+        );
+        
+        issueStore.getLatestIssueTime().ifPresentOrElse(
+                latest -> dateRange.put("latest", latest.format(formatter)),
+                () -> dateRange.put("latest", null)
+        );
+        
+        dateRange.put("totalIssues", issueStore.getCurrentIssuesCount());
+        
+        out.write(GSON.toJson(dateRange));
+    }
+    
+    private void handleExportIssues(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        String severity = req.getParameter("severity");
+        String server = req.getParameter("server");
+        String fromDate = req.getParameter("from");
+        String toDate = req.getParameter("to");
+        String format = req.getParameter("format"); // json or csv
+        
+        // Parse filters
+        LogIssue.Severity sev = null;
+        if (severity != null && !severity.isEmpty()) {
+            try {
+                sev = LogIssue.Severity.valueOf(severity.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                // Ignore invalid severity
+            }
+        }
+        
+        LocalDateTime from = parseDateTime(fromDate, true);
+        LocalDateTime to = parseDateTime(toDate, false);
+        
+        // Get all filtered issues (no pagination for export)
+        List<LogIssue> issues = issueStore.getFilteredIssues(sev, server, from, to, 0, Integer.MAX_VALUE);
+        
+        // Set content-type BEFORE getting writer
+        if ("csv".equalsIgnoreCase(format)) {
+            resp.setContentType("text/csv");
+            resp.setCharacterEncoding("UTF-8");
+            resp.setHeader("Content-Disposition", "attachment; filename=log-issues-export.csv");
+            PrintWriter out = resp.getWriter();
+            exportAsCsv(issues, out);
+        } else {
+            resp.setContentType("application/json");
+            resp.setCharacterEncoding("UTF-8");
+            PrintWriter out = resp.getWriter();
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("exportedAt", LocalDateTime.now().toString());
+            response.put("totalIssues", issues.size());
+            response.put("issues", issues.stream().map(this::issueToMap).toArray());
+            out.write(GSON.toJson(response));
+        }
+    }
+    
+    private void exportAsCsv(List<LogIssue> issues, PrintWriter out) {
+        // CSV header
+        out.println("ID,Server,File,Line,Type,Severity,Message,Detected At,Acknowledged");
+        
+        // CSV rows
+        for (LogIssue issue : issues) {
+            out.printf("\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\",%s%n",
+                    escapeCsv(issue.getId()),
+                    escapeCsv(issue.getServerName()),
+                    escapeCsv(issue.getFileName()),
+                    issue.getLineNumber(),
+                    escapeCsv(issue.getIssueType()),
+                    issue.getSeverity().name(),
+                    escapeCsv(issue.getMessage()),
+                    issue.getFormattedTime(),
+                    issue.isAcknowledged()
+            );
+        }
+    }
+    
+    private String escapeCsv(String value) {
+        if (value == null) return "";
+        return value.replace("\"", "\"\"");
     }
     
     private void handleAcknowledgeIssue(String id, PrintWriter out, HttpServletResponse resp) {

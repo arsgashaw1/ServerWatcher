@@ -133,6 +133,99 @@ public class IssueStore {
     }
     
     /**
+     * Gets issues within a date range.
+     */
+    public List<LogIssue> getIssuesByDateRange(LocalDateTime from, LocalDateTime to) {
+        return issues.stream()
+                .filter(i -> {
+                    LocalDateTime dt = i.getDetectedAt();
+                    return (from == null || !dt.isBefore(from)) && (to == null || !dt.isAfter(to));
+                })
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * Gets issues with combined filters (severity, server, date range).
+     */
+    public List<LogIssue> getFilteredIssues(Severity severity, String serverName, 
+                                             LocalDateTime from, LocalDateTime to,
+                                             int offset, int limit) {
+        return issues.stream()
+                .filter(i -> severity == null || i.getSeverity() == severity)
+                .filter(i -> serverName == null || serverName.isEmpty() || serverName.equals(i.getServerName()))
+                .filter(i -> {
+                    LocalDateTime dt = i.getDetectedAt();
+                    return (from == null || !dt.isBefore(from)) && (to == null || !dt.isAfter(to));
+                })
+                .skip(offset)
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * Gets total count of filtered issues.
+     */
+    public long getFilteredIssuesCount(Severity severity, String serverName, 
+                                        LocalDateTime from, LocalDateTime to) {
+        return issues.stream()
+                .filter(i -> severity == null || i.getSeverity() == severity)
+                .filter(i -> serverName == null || serverName.isEmpty() || serverName.equals(i.getServerName()))
+                .filter(i -> {
+                    LocalDateTime dt = i.getDetectedAt();
+                    return (from == null || !dt.isBefore(from)) && (to == null || !dt.isAfter(to));
+                })
+                .count();
+    }
+    
+    /**
+     * Gets the earliest issue timestamp.
+     */
+    public Optional<LocalDateTime> getEarliestIssueTime() {
+        return issues.stream()
+                .map(LogIssue::getDetectedAt)
+                .min(LocalDateTime::compareTo);
+    }
+    
+    /**
+     * Gets the latest issue timestamp.
+     */
+    public Optional<LocalDateTime> getLatestIssueTime() {
+        return issues.stream()
+                .map(LogIssue::getDetectedAt)
+                .max(LocalDateTime::compareTo);
+    }
+    
+    /**
+     * Gets issues grouped by date for trending.
+     */
+    public Map<String, Integer> getDailyTrend(int days) {
+        LocalDateTime now = LocalDateTime.now();
+        Map<String, Integer> trend = new LinkedHashMap<>();
+        java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("MM-dd");
+        
+        // Initialize all days (from days-1 ago to today)
+        for (int i = days - 1; i >= 0; i--) {
+            LocalDateTime day = now.minusDays(i).truncatedTo(ChronoUnit.DAYS);
+            trend.put(day.format(formatter), 0);
+        }
+        
+        // Count issues per day - use start of the first day as cutoff to match initialized keys
+        LocalDateTime cutoff = now.minusDays(days - 1).truncatedTo(ChronoUnit.DAYS);
+        for (LogIssue issue : issues) {
+            LocalDateTime issueTime = issue.getDetectedAt();
+            if (!issueTime.isBefore(cutoff)) {
+                String key = issueTime.format(formatter);
+                // Only count if key exists in our pre-initialized map
+                if (trend.containsKey(key)) {
+                    trend.merge(key, 1, Integer::sum);
+                }
+            }
+        }
+        
+        return trend;
+    }
+    
+    /**
      * Gets an issue by ID.
      */
     public Optional<LogIssue> getIssueById(String id) {

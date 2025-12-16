@@ -6,6 +6,10 @@ import com.logdashboard.model.LogIssue;
 import com.logdashboard.parser.LogParser;
 
 import java.io.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -25,6 +29,7 @@ public class LogFileWatcher {
     private final Map<Path, Long> filePositions;
     private final Map<Path, Integer> fileLineNumbers;
     private final Map<Path, String> fileServerNames;  // Maps file path to server name
+    private final Map<Path, Charset> fileCharsets;    // Maps file path to charset (for EBCDIC support)
     private final ScheduledExecutorService scheduler;
     private final List<Pattern> filePatterns;
     
@@ -42,6 +47,7 @@ public class LogFileWatcher {
         this.filePositions = new ConcurrentHashMap<>();
         this.fileLineNumbers = new ConcurrentHashMap<>();
         this.fileServerNames = new ConcurrentHashMap<>();
+        this.fileCharsets = new ConcurrentHashMap<>();
         this.dynamicServerPaths = Collections.synchronizedList(new ArrayList<>());
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "LogFileWatcher");
@@ -124,7 +130,7 @@ public class LogFileWatcher {
         // Scan legacy watch paths (no server name)
         if (config.getWatchPaths() != null) {
             for (String pathStr : config.getWatchPaths()) {
-                scanPath(pathStr, null);
+                scanPath(pathStr, null, StandardCharsets.UTF_8);
             }
         }
         
@@ -133,13 +139,16 @@ public class LogFileWatcher {
             for (ServerPath server : config.getServers()) {
                 String serverName = server.getServerName();
                 String pathStr = server.getPath();
-                updateStatus("Scanning server: " + serverName + " -> " + pathStr);
-                scanPath(pathStr, serverName);
+                Charset charset = server.getCharset();
+                String encodingInfo = server.getEncoding() != null ? 
+                    " [" + server.getEncoding() + "]" : "";
+                updateStatus("Scanning server: " + serverName + " -> " + pathStr + encodingInfo);
+                scanPath(pathStr, serverName, charset);
             }
         }
     }
     
-    private void scanPath(String pathStr, String serverName) {
+    private void scanPath(String pathStr, String serverName, Charset charset) {
         Path watchPath = Paths.get(pathStr);
         
         if (!Files.exists(watchPath)) {
@@ -154,12 +163,12 @@ public class LogFileWatcher {
                 try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
                     for (Path file : stream) {
                         if (Files.isRegularFile(file) && matchesFilePattern(file)) {
-                            initializeFile(file, serverName);
+                            initializeFile(file, serverName, charset);
                         }
                     }
                 }
             } else if (Files.isRegularFile(watchPath)) {
-                initializeFile(watchPath, serverName);
+                initializeFile(watchPath, serverName, charset);
             }
         } catch (IOException e) {
             updateStatus("Error scanning path: " + pathStr + " - " + e.getMessage());
@@ -169,17 +178,20 @@ public class LogFileWatcher {
     /**
      * Initializes tracking for a file (sets position to end of file).
      */
-    private void initializeFile(Path file, String serverName) {
+    private void initializeFile(Path file, String serverName, Charset charset) {
         try {
             long size = Files.size(file);
-            int lineCount = countLines(file);
+            int lineCount = countLines(file, charset);
             filePositions.put(file, size);
             fileLineNumbers.put(file, lineCount);
             if (serverName != null) {
                 fileServerNames.put(file, serverName);
             }
+            fileCharsets.put(file, charset);
             String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-            updateStatus("Tracking: " + file.getFileName() + serverInfo);
+            String charsetInfo = !StandardCharsets.UTF_8.equals(charset) ? 
+                " (" + charset.displayName() + ")" : "";
+            updateStatus("Tracking: " + file.getFileName() + serverInfo + charsetInfo);
         } catch (IOException e) {
             // If we can't read the file properly (e.g., encoding issues), 
             // still track it starting from the current position
@@ -190,6 +202,7 @@ public class LogFileWatcher {
                 if (serverName != null) {
                     fileServerNames.put(file, serverName);
                 }
+                fileCharsets.put(file, charset);
                 String serverInfo = serverName != null ? " [" + serverName + "]" : "";
                 updateStatus("Tracking: " + file.getFileName() + serverInfo);
             } catch (IOException ex) {
@@ -201,11 +214,11 @@ public class LogFileWatcher {
     
     /**
      * Counts the number of lines in a file.
-     * Uses ISO-8859-1 encoding to handle files with ANSI escape codes or other special characters.
+     * Uses the specified charset to handle various encodings including EBCDIC.
      */
-    private int countLines(Path file) throws IOException {
+    private int countLines(Path file, Charset charset) throws IOException {
         int count = 0;
-        try (BufferedReader reader = Files.newBufferedReader(file, java.nio.charset.StandardCharsets.ISO_8859_1)) {
+        try (BufferedReader reader = Files.newBufferedReader(file, charset)) {
             while (reader.readLine() != null) {
                 count++;
             }
@@ -226,21 +239,21 @@ public class LogFileWatcher {
         // Poll legacy watch paths
         if (config.getWatchPaths() != null) {
             for (String pathStr : config.getWatchPaths()) {
-                pollPath(pathStr, null, currentFiles);
+                pollPath(pathStr, null, StandardCharsets.UTF_8, currentFiles);
             }
         }
         
         // Poll server-based paths from initial config
         if (config.getServers() != null) {
             for (ServerPath server : config.getServers()) {
-                pollPath(server.getPath(), server.getServerName(), currentFiles);
+                pollPath(server.getPath(), server.getServerName(), server.getCharset(), currentFiles);
             }
         }
         
         // Poll dynamically added server paths (from hot reload)
         synchronized (dynamicServerPaths) {
             for (ServerPath server : dynamicServerPaths) {
-                pollPath(server.getPath(), server.getServerName(), currentFiles);
+                pollPath(server.getPath(), server.getServerName(), server.getCharset(), currentFiles);
             }
         }
         
@@ -248,12 +261,13 @@ public class LogFileWatcher {
         for (Path file : currentFiles) {
             if (!filePositions.containsKey(file)) {
                 String serverName = fileServerNames.get(file);
-                initializeFile(file, serverName);
+                Charset charset = fileCharsets.getOrDefault(file, StandardCharsets.UTF_8);
+                initializeFile(file, serverName, charset);
             }
         }
     }
     
-    private void pollPath(String pathStr, String serverName, Set<Path> currentFiles) {
+    private void pollPath(String pathStr, String serverName, Charset charset, Set<Path> currentFiles) {
         Path watchPath = Paths.get(pathStr);
         
         try {
@@ -265,6 +279,9 @@ public class LogFileWatcher {
                             if (serverName != null && !fileServerNames.containsKey(file)) {
                                 fileServerNames.put(file, serverName);
                             }
+                            if (!fileCharsets.containsKey(file)) {
+                                fileCharsets.put(file, charset);
+                            }
                             checkFileForChanges(file);
                         }
                     }
@@ -273,6 +290,9 @@ public class LogFileWatcher {
                 currentFiles.add(watchPath);
                 if (serverName != null && !fileServerNames.containsKey(watchPath)) {
                     fileServerNames.put(watchPath, serverName);
+                }
+                if (!fileCharsets.containsKey(watchPath)) {
+                    fileCharsets.put(watchPath, charset);
                 }
                 checkFileForChanges(watchPath);
             }
@@ -291,10 +311,11 @@ public class LogFileWatcher {
             long lastPosition = filePositions.getOrDefault(file, 0L);
             int lastLineNumber = fileLineNumbers.getOrDefault(file, 0);
             String serverName = fileServerNames.get(file);
+            Charset charset = fileCharsets.getOrDefault(file, StandardCharsets.UTF_8);
             
             if (currentSize > lastPosition) {
                 // File has grown - read new content
-                List<String> newLines = readNewLines(file, lastPosition);
+                List<String> newLines = readNewLines(file, lastPosition, charset);
                 
                 if (!newLines.isEmpty()) {
                     List<LogIssue> issues = parser.parseLines(
@@ -318,7 +339,7 @@ public class LogFileWatcher {
                 updateStatus("File rotated: " + file.getFileName() + serverInfo);
                 filePositions.put(file, currentSize);
                 try {
-                    fileLineNumbers.put(file, countLines(file));
+                    fileLineNumbers.put(file, countLines(file, charset));
                 } catch (IOException countError) {
                     // If we can't count lines, just reset to 0
                     fileLineNumbers.put(file, 0);
@@ -331,16 +352,58 @@ public class LogFileWatcher {
     
     /**
      * Reads new lines from a file starting from a given position.
+     * Supports various encodings including EBCDIC.
      */
-    private List<String> readNewLines(Path file, long startPosition) throws IOException {
+    private List<String> readNewLines(Path file, long startPosition, Charset charset) throws IOException {
         List<String> lines = new ArrayList<>();
         
-        try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "r")) {
-            raf.seek(startPosition);
-            String line;
-            while ((line = raf.readLine()) != null) {
-                // Handle encoding (readLine returns ISO-8859-1)
-                lines.add(new String(line.getBytes("ISO-8859-1"), "UTF-8"));
+        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+            channel.position(startPosition);
+            
+            // Read remaining content
+            long remaining = channel.size() - startPosition;
+            if (remaining <= 0) {
+                return lines;
+            }
+            
+            // Use a reasonable buffer size
+            int bufferSize = (int) Math.min(remaining, 64 * 1024); // Max 64KB chunks
+            ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
+            StringBuilder currentLine = new StringBuilder();
+            
+            while (channel.read(buffer) > 0) {
+                buffer.flip();
+                
+                // Decode bytes using the specified charset
+                byte[] bytes = new byte[buffer.remaining()];
+                buffer.get(bytes);
+                String content = new String(bytes, charset);
+                
+                // Split into lines
+                for (int i = 0; i < content.length(); i++) {
+                    char c = content.charAt(i);
+                    if (c == '\n') {
+                        lines.add(currentLine.toString());
+                        currentLine.setLength(0);
+                    } else if (c == '\r') {
+                        // Handle \r\n or standalone \r
+                        if (i + 1 < content.length() && content.charAt(i + 1) == '\n') {
+                            // Skip, will be handled by \n
+                        } else {
+                            lines.add(currentLine.toString());
+                            currentLine.setLength(0);
+                        }
+                    } else {
+                        currentLine.append(c);
+                    }
+                }
+                
+                buffer.clear();
+            }
+            
+            // Add any remaining content as the last line
+            if (currentLine.length() > 0) {
+                lines.add(currentLine.toString());
             }
         }
         
@@ -387,6 +450,7 @@ public class LogFileWatcher {
         filePositions.clear();
         fileLineNumbers.clear();
         fileServerNames.clear();
+        fileCharsets.clear();
         initialScan();
     }
     
@@ -406,20 +470,22 @@ public class LogFileWatcher {
         for (ServerPath server : newServers) {
             String serverName = server.getServerName();
             String pathStr = server.getPath();
+            Charset charset = server.getCharset();
             
             if (pathStr == null || pathStr.isEmpty()) {
                 continue;
             }
             
             String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-            updateStatus("Adding new server path: " + pathStr + serverInfo);
+            String encodingInfo = server.getEncoding() != null ? " (" + server.getEncoding() + ")" : "";
+            updateStatus("Adding new server path: " + pathStr + serverInfo + encodingInfo);
             
             // Add to dynamic server paths list so pollFiles() will monitor it
             dynamicServerPaths.add(server);
             addedCount++;
             
             // Scan the new path for initial file discovery
-            scanPath(pathStr, serverName);
+            scanPath(pathStr, serverName, charset);
         }
         
         if (addedCount > 0) {
@@ -434,18 +500,31 @@ public class LogFileWatcher {
      * @param path The path to watch
      */
     public void addServerPath(String serverName, String path) {
+        addServerPath(serverName, path, null);
+    }
+    
+    /**
+     * Adds a single server path to watch dynamically with custom encoding.
+     * 
+     * @param serverName The server name (can be null for legacy paths)
+     * @param path The path to watch
+     * @param encoding The character encoding (e.g., "UTF-8", "EBCDIC", "Cp1047")
+     */
+    public void addServerPath(String serverName, String path, String encoding) {
         if (path == null || path.isEmpty()) {
             return;
         }
         
+        ServerPath server = new ServerPath(serverName, path, null, encoding);
         String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-        updateStatus("Adding new server path: " + path + serverInfo);
+        String encodingInfo = encoding != null ? " (" + encoding + ")" : "";
+        updateStatus("Adding new server path: " + path + serverInfo + encodingInfo);
         
         // Add to dynamic server paths list so pollFiles() will monitor it
-        dynamicServerPaths.add(new ServerPath(serverName, path));
+        dynamicServerPaths.add(server);
         
         // Scan the new path for initial file discovery
-        scanPath(path, serverName);
+        scanPath(path, serverName, server.getCharset());
         
         updateStatus("Now watching " + getTotalWatchPaths() + " path(s)");
     }
