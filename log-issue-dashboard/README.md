@@ -96,7 +96,12 @@ Usage:
 
 Arguments:
   <config-folder>     Path to folder containing dashboard-config.json
-  [port]              HTTP port (default: 8080)
+  [port]              HTTP port (overrides config file; default: 8080)
+
+Port Priority:
+  1. Command line argument (if provided)
+  2. webServerPort from config file (if set)
+  3. Default: 8080
 
 Options:
   --help, -h          Show help message

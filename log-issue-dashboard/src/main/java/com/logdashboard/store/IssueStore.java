@@ -6,6 +6,7 @@ import com.logdashboard.model.LogIssue.Severity;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
@@ -33,8 +34,8 @@ public class IssueStore {
         this.maxIssues = maxIssues;
         this.listeners = new CopyOnWriteArrayList<>();
         this.totalIssuesCount = new AtomicLong(0);
-        this.severityCounts = new HashMap<>();
-        this.serverCounts = new HashMap<>();
+        this.severityCounts = new ConcurrentHashMap<>();
+        this.serverCounts = new ConcurrentHashMap<>();
         
         for (Severity s : Severity.values()) {
             severityCounts.put(s, new AtomicLong(0));

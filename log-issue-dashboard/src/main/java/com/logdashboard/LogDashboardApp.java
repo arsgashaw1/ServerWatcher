@@ -67,16 +67,6 @@ public class LogDashboardApp {
             }
         }
         
-        // Parse port
-        int port = DEFAULT_PORT;
-        if (args.length >= 2) {
-            try {
-                port = Integer.parseInt(args[1]);
-            } catch (NumberFormatException e) {
-                System.err.println("Invalid port number: " + args[1] + ". Using default: " + DEFAULT_PORT);
-            }
-        }
-        
         System.out.println();
         System.out.println("╔════════════════════════════════════════════════════════════╗");
         System.out.println("║           Log Issue Dashboard v" + VERSION + "                     ║");
@@ -106,6 +96,20 @@ public class LogDashboardApp {
             e.printStackTrace();
             System.exit(1);
             return;
+        }
+        
+        // Determine port: command line arg > config file > default
+        int port;
+        if (args.length >= 2) {
+            try {
+                port = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid port number: " + args[1] + ". Using config/default port.");
+                port = config.getWebServerPort() > 0 ? config.getWebServerPort() : DEFAULT_PORT;
+            }
+        } else {
+            // Use config file port if set, otherwise use default
+            port = config.getWebServerPort() > 0 ? config.getWebServerPort() : DEFAULT_PORT;
         }
         
         // Start the application
