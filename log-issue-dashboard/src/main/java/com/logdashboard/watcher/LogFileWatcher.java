@@ -487,6 +487,20 @@ public class LogFileWatcher {
                     content = new String(bytes, charset);
                 }
                 
+                // TODO: Remove this debug output - shows raw file content for encoding debugging
+                System.out.println("=== DEBUG: Reading file content ===");
+                System.out.println("File: " + file.getFileName());
+                System.out.println("Charset: " + charset.displayName());
+                System.out.println("Using iconv: " + (useIconv && iconvEncoding != null));
+                if (iconvEncoding != null) {
+                    System.out.println("iconv encoding: " + iconvEncoding);
+                }
+                System.out.println("Raw bytes length: " + bytes.length);
+                System.out.println("First 100 bytes (hex): " + bytesToHex(bytes, 100));
+                System.out.println("Converted content preview (first 500 chars):");
+                System.out.println(content.length() > 500 ? content.substring(0, 500) + "..." : content);
+                System.out.println("=== END DEBUG ===");
+                
                 // Split into lines
                 for (int i = 0; i < content.length(); i++) {
                     char c = content.charAt(i);
@@ -535,6 +549,19 @@ public class LogFileWatcher {
         if (statusCallback != null) {
             statusCallback.accept(status);
         }
+    }
+    
+    // TODO: Remove this debug helper method
+    private static String bytesToHex(byte[] bytes, int maxBytes) {
+        StringBuilder sb = new StringBuilder();
+        int limit = Math.min(bytes.length, maxBytes);
+        for (int i = 0; i < limit; i++) {
+            sb.append(String.format("%02X ", bytes[i] & 0xFF));
+        }
+        if (bytes.length > maxBytes) {
+            sb.append("...");
+        }
+        return sb.toString();
     }
     
     /**
