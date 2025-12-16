@@ -14,14 +14,13 @@ import java.util.concurrent.TimeUnit;
  * system's iconv may provide better compatibility than Java's built-in charset handling.
  * 
  * Common conversions:
- * - IBM-1047 (EBCDIC Unix/z/OS) -> UTF-8
- * - ISO8859-1 -> IBM-1047 (for writing EBCDIC)
- * - Cp037 (EBCDIC US/Canada) -> UTF-8
+ * - IBM-1047 (EBCDIC Unix/z/OS) -> ISO8859-1 (for readable output)
+ * - Cp037 (EBCDIC US/Canada) -> ISO8859-1
  * 
  * Usage:
  * <pre>
- *   IconvConverter.convertFileToUtf8(path, "IBM-1047");
- *   String text = IconvConverter.convertToUtf8(bytes, "IBM-1047");
+ *   IconvConverter.convertEbcdicToReadable(bytes, "IBM-1047");
+ *   String text = IconvConverter.convertToIso8859(bytes, "IBM-1047");
  * </pre>
  */
 public class IconvConverter {
@@ -50,25 +49,17 @@ public class IconvConverter {
                 pb.redirectErrorStream(true);
                 Process process = pb.start();
                 
-                // Read output
-                StringBuilder output = new StringBuilder();
+                // Consume output to prevent blocking
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(process.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        output.append(line).append("\n");
+                    while (reader.readLine() != null) {
+                        // Consume output
                     }
                 }
                 
                 boolean completed = process.waitFor(5, TimeUnit.SECONDS);
-                int exitCode = process.exitValue();
-                iconvAvailable = completed && exitCode == 0;
-                
-                System.out.println("DEBUG: iconv check - completed: " + completed + ", exitCode: " + exitCode);
-                System.out.println("DEBUG: iconv output: " + output.toString().trim());
-                System.out.println("DEBUG: iconv available: " + iconvAvailable);
+                iconvAvailable = completed && process.exitValue() == 0;
             } catch (Exception e) {
-                System.out.println("DEBUG: iconv check failed with exception: " + e.getMessage());
                 iconvAvailable = false;
             }
         }
@@ -139,12 +130,8 @@ public class IconvConverter {
      */
     public static String convertToIso8859(byte[] data, String fromEncoding) throws IOException {
         if (!isIconvAvailable()) {
-            System.out.println("DEBUG: iconv not available, using fallback");
             return convertToIso8859Fallback(data, fromEncoding);
         }
-        
-        // TODO: REMOVE - Debug print actual command
-        System.out.println("DEBUG: Running command: iconv -f " + fromEncoding + " -t " + ICONV_ISO8859_1);
         
         ProcessBuilder pb = new ProcessBuilder(
             "iconv",

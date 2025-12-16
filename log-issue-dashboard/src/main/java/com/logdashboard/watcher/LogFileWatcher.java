@@ -257,40 +257,6 @@ public class LogFileWatcher {
                 }
             }
             
-            // TODO: REMOVE - Debug log to see initial file content
-            try {
-                byte[] rawBytes = Files.readAllBytes(file);
-                String content;
-                boolean isEbcdic = IconvConverter.isEbcdicEncoding(effectiveIconvEncoding);
-                
-                System.out.println("=== [" + file.getFileName() + "] ===");
-                System.out.println("effectiveIconvEncoding: " + effectiveIconvEncoding);
-                System.out.println("isEbcdic: " + isEbcdic);
-                System.out.println("isIconvAvailable: " + IconvConverter.isIconvAvailable());
-                System.out.println("Size: " + rawBytes.length + " bytes");
-                
-                if (isEbcdic && IconvConverter.isIconvAvailable()) {
-                    // EBCDIC: iconv -f IBM-1047 -t ISO8859-1
-                    System.out.println("Using: iconv -f " + effectiveIconvEncoding + " -t ISO8859-1");
-                    content = IconvConverter.convertEbcdicToReadable(rawBytes, effectiveIconvEncoding);
-                } else if (StandardCharsets.ISO_8859_1.equals(effectiveCharset)) {
-                    // ISO8859-1: direct read
-                    System.out.println("Using: direct read as ISO8859-1");
-                    content = new String(rawBytes, StandardCharsets.ISO_8859_1);
-                } else {
-                    // UTF-8: direct read
-                    System.out.println("Using: direct read as " + effectiveCharset);
-                    content = new String(rawBytes, effectiveCharset);
-                }
-                
-                System.out.println("Content (first 1000 chars):");
-                System.out.println(content.length() > 1000 ? content.substring(0, 1000) + "..." : content);
-                System.out.println("=== END ===\n");
-            } catch (Exception e) {
-                System.out.println("Error reading " + file.getFileName() + ": " + e.getMessage());
-                e.printStackTrace();
-            }
-            
             long size = Files.size(file);
             int lineCount = countLines(file, effectiveCharset, effectiveIconvEncoding, effectiveUseIconv);
             filePositions.put(file, size);
@@ -303,9 +269,6 @@ public class LogFileWatcher {
                 fileIconvEncodings.put(file, effectiveIconvEncoding);
             }
             fileUseIconv.put(file, effectiveUseIconv);
-            
-            // TODO: REMOVE - Debug stored values
-            System.out.println("STORED: " + file.getFileName() + " -> iconvEncoding=" + effectiveIconvEncoding + ", useIconv=" + effectiveUseIconv);
             
             String serverInfo = serverName != null ? " [" + serverName + "]" : "";
             String charsetInfo = "";
@@ -477,24 +440,11 @@ public class LogFileWatcher {
             String iconvEncoding = fileIconvEncodings.get(file);
             boolean useIconv = fileUseIconv.getOrDefault(file, false);
             
-            // TODO: REMOVE - Debug polling
-            System.out.println("POLL: " + file.getFileName() + " - currentSize=" + currentSize + ", lastPosition=" + lastPosition + ", diff=" + (currentSize - lastPosition));
-            
             if (currentSize > lastPosition) {
                 // File has grown - read new content
-                System.out.println("DEBUG: File changed: " + file.getFileName() + " (+" + (currentSize - lastPosition) + " bytes)");
-                System.out.println("DEBUG: iconvEncoding=" + iconvEncoding + ", useIconv=" + useIconv);
-                
                 List<String> newLines = readNewLines(file, lastPosition, charset, iconvEncoding, useIconv);
                 
-                System.out.println("DEBUG: Read " + newLines.size() + " new lines");
-                
                 if (!newLines.isEmpty()) {
-                    // Show first few lines for debugging
-                    for (int i = 0; i < Math.min(3, newLines.size()); i++) {
-                        System.out.println("DEBUG: Line " + (i+1) + ": " + newLines.get(i));
-                    }
-                    
                     List<LogIssue> issues = parser.parseLines(
                         serverName,
                         file.getFileName().toString(),
@@ -502,10 +452,7 @@ public class LogFileWatcher {
                         lastLineNumber + 1
                     );
                     
-                    System.out.println("DEBUG: Found " + issues.size() + " issues");
-                    
                     for (LogIssue issue : issues) {
-                        System.out.println("DEBUG: Issue - " + issue.getSeverity() + ": " + issue.getMessage());
                         issueCallback.accept(issue);
                     }
                     
@@ -575,13 +522,12 @@ public class LogFileWatcher {
                 boolean isEbcdic = IconvConverter.isEbcdicEncoding(iconvEncoding);
                 
                 if (isEbcdic && IconvConverter.isIconvAvailable()) {
-                    // EBCDIC encoding: Convert to ISO8859-1 (Method 5)
+                    // EBCDIC encoding: Convert to ISO8859-1
                     // Command: iconv -f IBM-1047 -t ISO8859-1
                     try {
                         content = IconvConverter.convertEbcdicToReadable(bytes, iconvEncoding);
                     } catch (IOException e) {
                         // Fall back to Java charset if iconv fails
-                        System.err.println("EBCDIC conversion failed, falling back to Java charset: " + e.getMessage());
                         content = new String(bytes, charset);
                     }
                 } else if (StandardCharsets.ISO_8859_1.equals(charset) || "ISO8859-1".equals(iconvEncoding)) {
@@ -591,10 +537,6 @@ public class LogFileWatcher {
                     // UTF-8 or other: Direct read with specified charset
                     content = new String(bytes, charset);
                 }
-                
-                // TODO: REMOVE - Debug log to see file content
-                System.out.println("[" + file.getFileName() + "] Read " + bytes.length + " bytes (" + iconvEncoding + "):");
-                System.out.println(content.length() > 1000 ? content.substring(0, 1000) + "..." : content);
                 
                 // Split into lines
                 for (int i = 0; i < content.length(); i++) {
