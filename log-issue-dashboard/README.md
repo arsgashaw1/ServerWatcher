@@ -11,21 +11,37 @@ A Java application that watches log files for exceptions, errors, and warnings, 
 - **Filtering**: Filter by severity (Error, Warning, Exception) and search text
 - **Sortable Table**: Sort issues by time, severity, type, file, or message
 - **Configurable**: JSON-based configuration for all settings
+- **Hot Reload**: Automatically detects changes to `dashboard-config.json` and adds new servers without restart
 - **File Rotation Support**: Handles log file rotation gracefully
 
 ## Requirements
 
 - Java 11 or higher
-- Maven 3.6+ (for building)
+- Gradle 8.5+ (or use the included Gradle wrapper)
 
 ## Building
 
 ```bash
 cd log-issue-dashboard
-mvn clean package
+./gradlew build
 ```
 
-This creates an executable JAR file: `target/log-issue-dashboard-1.0.0.jar`
+This creates:
+- A regular JAR file: `build/libs/log-issue-dashboard-1.0.0.jar`
+- A fat JAR with all dependencies: `build/libs/log-issue-dashboard-1.0.0-all.jar`
+
+### Other Gradle Tasks
+
+```bash
+# Clean build artifacts
+./gradlew clean
+
+# Run the application
+./gradlew run --args="<config-folder>"
+
+# Build only the fat JAR
+./gradlew fatJar
+```
 
 ## Usage
 
@@ -147,6 +163,33 @@ The `servers` array is the recommended way to configure watched paths. Each entr
 
 The server name will be displayed in a dedicated column in the dashboard, making it easy to identify which server each issue came from. Each server is color-coded for quick visual identification.
 
+### Hot Reload (Dynamic Server Updates)
+
+The dashboard automatically monitors the `dashboard-config.json` file for changes. When you add new servers to the configuration:
+
+1. Edit the `dashboard-config.json` file and add new entries to the `servers` array
+2. Save the file
+3. The dashboard will automatically detect the change and start watching the new server paths
+4. No restart required!
+
+**Example:** While the dashboard is running, add a new server:
+
+```json
+{
+  "servers": [
+    { "serverName": "PROD1", "path": "/logs/prod1" },
+    { "serverName": "PROD2", "path": "/logs/prod2" }  // Add this new server
+  ]
+}
+```
+
+The status bar will show messages like:
+- "Configuration file changed, reloading..."
+- "New server detected: PROD2 -> /logs/prod2"
+- "Added 1 new server(s)/path(s)"
+
+**Note:** Currently, only adding new servers is supported. Removing servers requires a restart.
+
 ## Dashboard Features
 
 ### Issue Table
@@ -198,7 +241,12 @@ This application works well with USS (Unix System Services) paths on z/OS:
 
 ```
 log-issue-dashboard/
-├── pom.xml
+├── build.gradle.kts                  # Gradle build file
+├── settings.gradle.kts               # Gradle settings
+├── gradle.properties                 # Gradle properties
+├── gradlew                           # Gradle wrapper (Unix)
+├── gradlew.bat                       # Gradle wrapper (Windows)
+├── gradle/wrapper/                   # Gradle wrapper files
 ├── README.md
 ├── config-sample/
 │   └── dashboard-config.json

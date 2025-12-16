@@ -3,6 +3,7 @@ package com.logdashboard;
 import com.logdashboard.config.ConfigLoader;
 import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.ui.DashboardFrame;
+import com.logdashboard.watcher.ConfigFileWatcher;
 import com.logdashboard.watcher.LogFileWatcher;
 
 import javax.swing.*;
@@ -61,14 +62,18 @@ public class LogDashboardApp {
         // Load configuration
         DashboardConfig config;
         try {
-            ConfigLoader loader = new ConfigLoader(configFolder);
-            config = loader.loadConfig();
+            configLoader = new ConfigLoader(configFolder);
+            config = configLoader.loadConfig();
             
-            if (config.getWatchPaths().isEmpty()) {
+            boolean hasServers = config.getServers() != null && !config.getServers().isEmpty();
+            boolean hasWatchPaths = config.getWatchPaths() != null && !config.getWatchPaths().isEmpty();
+            
+            if (!hasServers && !hasWatchPaths) {
                 System.out.println();
                 System.out.println("WARNING: No watch paths configured!");
-                System.out.println("Please edit: " + loader.getConfigFilePath());
-                System.out.println("Add paths to the 'watchPaths' array in the configuration file.");
+                System.out.println("Please edit: " + configLoader.getConfigFilePath());
+                System.out.println("Add servers to the 'servers' array or paths to the 'watchPaths' array.");
+                System.out.println("The dashboard will automatically detect changes to the config file.");
                 System.out.println();
             }
         } catch (IOException e) {
@@ -95,6 +100,8 @@ public class LogDashboardApp {
         });
     }
     
+    private static ConfigLoader configLoader;
+    
     private static void startApplication(DashboardConfig config) {
         // Create and show the dashboard
         DashboardFrame dashboard = new DashboardFrame(config);
@@ -106,19 +113,30 @@ public class LogDashboardApp {
             dashboard::updateStatus
         );
         
-        // Add shutdown hook to stop watcher gracefully
+        // Create and start the config file watcher
+        ConfigFileWatcher configWatcher = new ConfigFileWatcher(
+            configLoader,
+            config,
+            watcher::addServerPaths,
+            dashboard::updateStatus
+        );
+        
+        // Add shutdown hook to stop watchers gracefully
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("Shutting down...");
             watcher.stop();
+            configWatcher.stop();
         }));
         
-        // Start the watcher
+        // Start the watchers
         watcher.start();
+        configWatcher.start();
         
         // Show the dashboard
         dashboard.setVisible(true);
         
         System.out.println("Dashboard started. Watching for log file changes...");
+        System.out.println("Configuration file will be monitored for new servers.");
     }
     
     private static void printUsage() {

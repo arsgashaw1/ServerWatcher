@@ -28,6 +28,9 @@ public class LogFileWatcher {
     private final ScheduledExecutorService scheduler;
     private final List<Pattern> filePatterns;
     
+    // Track dynamically added server paths for polling
+    private final List<ServerPath> dynamicServerPaths;
+    
     private volatile boolean running;
     
     public LogFileWatcher(DashboardConfig config, Consumer<LogIssue> issueCallback, 
@@ -39,6 +42,7 @@ public class LogFileWatcher {
         this.filePositions = new ConcurrentHashMap<>();
         this.fileLineNumbers = new ConcurrentHashMap<>();
         this.fileServerNames = new ConcurrentHashMap<>();
+        this.dynamicServerPaths = Collections.synchronizedList(new ArrayList<>());
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "LogFileWatcher");
             t.setDaemon(true);
@@ -94,6 +98,8 @@ public class LogFileWatcher {
         if (config.getServers() != null) {
             count += config.getServers().size();
         }
+        // Include dynamically added server paths
+        count += dynamicServerPaths.size();
         return count;
     }
     
@@ -209,9 +215,16 @@ public class LogFileWatcher {
             }
         }
         
-        // Poll server-based paths
+        // Poll server-based paths from initial config
         if (config.getServers() != null) {
             for (ServerPath server : config.getServers()) {
+                pollPath(server.getPath(), server.getServerName(), currentFiles);
+            }
+        }
+        
+        // Poll dynamically added server paths (from hot reload)
+        synchronized (dynamicServerPaths) {
+            for (ServerPath server : dynamicServerPaths) {
                 pollPath(server.getPath(), server.getServerName(), currentFiles);
             }
         }
@@ -355,5 +368,65 @@ public class LogFileWatcher {
         fileLineNumbers.clear();
         fileServerNames.clear();
         initialScan();
+    }
+    
+    /**
+     * Adds new server paths to watch dynamically.
+     * This is called when the configuration file is updated with new servers.
+     * 
+     * @param newServers List of new ServerPath objects to watch
+     */
+    public void addServerPaths(List<ServerPath> newServers) {
+        if (newServers == null || newServers.isEmpty()) {
+            return;
+        }
+        
+        int addedCount = 0;
+        
+        for (ServerPath server : newServers) {
+            String serverName = server.getServerName();
+            String pathStr = server.getPath();
+            
+            if (pathStr == null || pathStr.isEmpty()) {
+                continue;
+            }
+            
+            String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+            updateStatus("Adding new server path: " + pathStr + serverInfo);
+            
+            // Add to dynamic server paths list so pollFiles() will monitor it
+            dynamicServerPaths.add(server);
+            addedCount++;
+            
+            // Scan the new path for initial file discovery
+            scanPath(pathStr, serverName);
+        }
+        
+        if (addedCount > 0) {
+            updateStatus("Now watching " + getTotalWatchPaths() + " path(s)");
+        }
+    }
+    
+    /**
+     * Adds a single server path to watch dynamically.
+     * 
+     * @param serverName The server name (can be null for legacy paths)
+     * @param path The path to watch
+     */
+    public void addServerPath(String serverName, String path) {
+        if (path == null || path.isEmpty()) {
+            return;
+        }
+        
+        String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+        updateStatus("Adding new server path: " + path + serverInfo);
+        
+        // Add to dynamic server paths list so pollFiles() will monitor it
+        dynamicServerPaths.add(new ServerPath(serverName, path));
+        
+        // Scan the new path for initial file discovery
+        scanPath(path, serverName);
+        
+        updateStatus("Now watching " + getTotalWatchPaths() + " path(s)");
     }
 }
