@@ -1,6 +1,7 @@
 plugins {
     java
     application
+    idea
 }
 
 group = "com.logdashboard"
@@ -60,4 +61,11 @@ tasks.register<Jar>("fatJar") {
 
 tasks.build {
     dependsOn(tasks.named("fatJar"))
+}
+
+idea {
+    module {
+        isDownloadJavadoc = true
+        isDownloadSources = true
+    }
 }
