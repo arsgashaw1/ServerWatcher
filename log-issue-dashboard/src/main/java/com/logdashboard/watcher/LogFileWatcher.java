@@ -487,6 +487,15 @@ public class LogFileWatcher {
                     content = new String(bytes, charset);
                 }
                 
+                // TODO: REMOVE - Temporary debug log to see file content
+                System.out.println("=== DEBUG: Reading file content ===");
+                System.out.println("File: " + file.getFileName());
+                System.out.println("Charset: " + charset + ", iconvEncoding: " + iconvEncoding + ", useIconv: " + useIconv);
+                System.out.println("Bytes read: " + bytes.length);
+                System.out.println("Content preview (first 500 chars):");
+                System.out.println(content.length() > 500 ? content.substring(0, 500) + "..." : content);
+                System.out.println("=== END DEBUG ===");
+                
                 // Split into lines
                 for (int i = 0; i < content.length(); i++) {
                     char c = content.charAt(i);
