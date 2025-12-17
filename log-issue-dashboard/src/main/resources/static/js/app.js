@@ -20,6 +20,8 @@ class LogDashboard {
             total: 0,
             totalFiltered: 0
         };
+        this.viewers = [];
+        this.myViewerId = null; // Unique ID assigned by server to identify self
         
         this.init();
     }
@@ -133,8 +135,13 @@ class LogDashboard {
         };
         
         this.eventSource.addEventListener('connected', (e) => {
-            console.log('Connection confirmed:', e.data);
+            const data = JSON.parse(e.data);
+            console.log('Connection confirmed:', data);
             this.updateConnectionStatus('connected');
+            // Store our unique viewer ID for self-identification
+            if (data.viewerId) {
+                this.myViewerId = data.viewerId;
+            }
         });
         
         this.eventSource.addEventListener('issue', (e) => {
@@ -146,6 +153,11 @@ class LogDashboard {
         this.eventSource.addEventListener('stats', (e) => {
             const stats = JSON.parse(e.data);
             this.displayStats(stats);
+        });
+        
+        this.eventSource.addEventListener('viewers', (e) => {
+            const data = JSON.parse(e.data);
+            this.updateViewers(data);
         });
         
         this.eventSource.onerror = () => {
@@ -175,6 +187,31 @@ class LogDashboard {
                 break;
             default:
                 textEl.textContent = 'Connecting...';
+        }
+    }
+    
+    // Viewer tracking
+    updateViewers(data) {
+        this.viewers = data.viewers || [];
+        
+        // Update count
+        document.getElementById('viewersCount').textContent = data.count || 0;
+        
+        // Update dropdown list
+        const listEl = document.getElementById('viewersList');
+        if (this.viewers.length === 0) {
+            listEl.innerHTML = '<div class="viewer-item">No viewers</div>';
+        } else {
+            // Use viewer ID to identify self, not arbitrary index
+            listEl.innerHTML = this.viewers.map(viewer => {
+                const isSelf = this.myViewerId && viewer.id === this.myViewerId;
+                return `
+                    <div class="viewer-item${isSelf ? ' self' : ''}">
+                        <span class="viewer-ip">${this.escapeHtml(viewer.ip)}</span>
+                        <span class="viewer-time">since ${viewer.connectedAt}</span>
+                    </div>
+                `;
+            }).join('');
         }
     }
     

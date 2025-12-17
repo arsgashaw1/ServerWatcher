@@ -51,15 +51,16 @@ public class WebServer {
         String docBase = new File(".").getAbsolutePath();
         Context context = tomcat.addContext(contextPath, docBase);
         
-        // Add API servlet
-        ApiServlet apiServlet = new ApiServlet(issueStore, analysisService, config);
-        Tomcat.addServlet(context, "api", apiServlet);
-        context.addServletMappingDecoded("/api/*", "api");
-        
-        // Add Event Stream servlet (SSE)
+        // Add Event Stream servlet (SSE) - create first for reference
         eventStreamServlet = new EventStreamServlet(issueStore);
         Tomcat.addServlet(context, "events", eventStreamServlet).setAsyncSupported(true);
         context.addServletMappingDecoded("/events", "events");
+        
+        // Add API servlet with reference to event stream for viewer tracking
+        ApiServlet apiServlet = new ApiServlet(issueStore, analysisService, config);
+        apiServlet.setEventStreamServlet(eventStreamServlet);
+        Tomcat.addServlet(context, "api", apiServlet);
+        context.addServletMappingDecoded("/api/*", "api");
         
         // Add Static file servlet
         StaticFileServlet staticServlet = new StaticFileServlet("static");

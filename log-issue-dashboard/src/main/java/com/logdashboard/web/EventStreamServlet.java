@@ -13,14 +13,21 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Server-Sent Events (SSE) servlet for real-time issue streaming.
  * Clients can subscribe to receive new issues as they occur.
  * Memory optimization: limits maximum concurrent SSE connections.
+ * Also tracks viewer information (IP addresses) for dashboard display.
  */
 public class EventStreamServlet extends HttpServlet {
     
@@ -28,18 +35,55 @@ public class EventStreamServlet extends HttpServlet {
             .setDateFormat("yyyy-MM-dd'T'HH:mm:ss")
             .create();
     
+    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
+    
     // Maximum concurrent SSE connections to prevent memory exhaustion
     private static final int MAX_SSE_CLIENTS = 100;
     
     private final IssueStore issueStore;
     private final CopyOnWriteArrayList<AsyncContext> clients;
     
+    // Track viewer information: maps AsyncContext to ViewerInfo
+    private final ConcurrentHashMap<AsyncContext, ViewerInfo> viewerInfoMap;
+    
     public EventStreamServlet(IssueStore issueStore) {
         this.issueStore = issueStore;
         this.clients = new CopyOnWriteArrayList<>();
+        this.viewerInfoMap = new ConcurrentHashMap<>();
         
         // Register listener for new issues
         issueStore.addListener(this::broadcastIssue);
+    }
+    
+    /**
+     * Information about a viewer (connected client).
+     */
+    public static class ViewerInfo {
+        private final String viewerId;
+        private final String ipAddress;
+        private final LocalDateTime connectedAt;
+        
+        public ViewerInfo(String ipAddress) {
+            this.viewerId = UUID.randomUUID().toString().substring(0, 8);
+            this.ipAddress = ipAddress;
+            this.connectedAt = LocalDateTime.now();
+        }
+        
+        public String getViewerId() {
+            return viewerId;
+        }
+        
+        public String getIpAddress() {
+            return ipAddress;
+        }
+        
+        public LocalDateTime getConnectedAt() {
+            return connectedAt;
+        }
+        
+        public String getConnectedAtFormatted() {
+            return connectedAt.format(TIME_FORMATTER);
+        }
     }
     
     @Override
@@ -65,31 +109,39 @@ public class EventStreamServlet extends HttpServlet {
         AsyncContext asyncContext = req.startAsync();
         asyncContext.setTimeout(0); // No timeout
         
-        // Send initial connection event
+        // Get client IP address and create viewer info
+        String clientIp = getClientIpAddress(req);
+        ViewerInfo viewerInfo = new ViewerInfo(clientIp);
+        
+        // Send initial connection event with viewer's own ID
         try {
             PrintWriter out = resp.getWriter();
             out.write("event: connected\n");
-            out.write("data: {\"status\":\"connected\",\"clientCount\":" + (clients.size() + 1) + ",\"maxClients\":" + MAX_SSE_CLIENTS + "}\n\n");
+            out.write("data: {\"status\":\"connected\",\"viewerId\":\"" + viewerInfo.getViewerId() + "\",\"clientCount\":" + (clients.size() + 1) + ",\"maxClients\":" + MAX_SSE_CLIENTS + "}\n\n");
             out.flush();
             
-            // Add to active clients
+            // Add to active clients and viewer map
             clients.add(asyncContext);
+            viewerInfoMap.put(asyncContext, viewerInfo);
+            
+            // Broadcast updated viewer list to all clients
+            broadcastViewers();
             
             // Handle client disconnect
             asyncContext.addListener(new jakarta.servlet.AsyncListener() {
                 @Override
                 public void onComplete(jakarta.servlet.AsyncEvent event) {
-                    clients.remove(asyncContext);
+                    removeClient(asyncContext);
                 }
                 
                 @Override
                 public void onTimeout(jakarta.servlet.AsyncEvent event) {
-                    clients.remove(asyncContext);
+                    removeClient(asyncContext);
                 }
                 
                 @Override
                 public void onError(jakarta.servlet.AsyncEvent event) {
-                    clients.remove(asyncContext);
+                    removeClient(asyncContext);
                 }
                 
                 @Override
@@ -104,11 +156,43 @@ public class EventStreamServlet extends HttpServlet {
     }
     
     /**
+     * Extracts the client IP address, considering proxies.
+     */
+    private String getClientIpAddress(HttpServletRequest req) {
+        // Check for X-Forwarded-For header (when behind proxy/load balancer)
+        String xForwardedFor = req.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
+            // Take the first IP in the chain (original client)
+            return xForwardedFor.split(",")[0].trim();
+        }
+        
+        // Check for X-Real-IP header
+        String xRealIp = req.getHeader("X-Real-IP");
+        if (xRealIp != null && !xRealIp.isEmpty()) {
+            return xRealIp;
+        }
+        
+        // Fall back to direct connection IP
+        return req.getRemoteAddr();
+    }
+    
+    /**
+     * Removes a client and broadcasts updated viewer list.
+     */
+    private void removeClient(AsyncContext asyncContext) {
+        clients.remove(asyncContext);
+        viewerInfoMap.remove(asyncContext);
+        broadcastViewers();
+    }
+    
+    /**
      * Broadcasts a new issue to all connected SSE clients.
      */
     private void broadcastIssue(LogIssue issue) {
         Map<String, Object> eventData = issueToMap(issue);
         String jsonData = GSON.toJson(eventData);
+        
+        List<AsyncContext> failedClients = new ArrayList<>();
         
         for (AsyncContext client : clients) {
             try {
@@ -118,17 +202,19 @@ public class EventStreamServlet extends HttpServlet {
                 out.flush();
                 
                 if (out.checkError()) {
-                    clients.remove(client);
-                    try {
-                        client.complete();
-                    } catch (Exception ignored) {}
+                    failedClients.add(client);
                 }
             } catch (Exception e) {
-                clients.remove(client);
-                try {
-                    client.complete();
-                } catch (Exception ignored) {}
+                failedClients.add(client);
             }
+        }
+        
+        // Clean up failed clients (removes from both clients and viewerInfoMap)
+        for (AsyncContext client : failedClients) {
+            removeClient(client);
+            try {
+                client.complete();
+            } catch (Exception ignored) {}
         }
     }
     
@@ -138,6 +224,8 @@ public class EventStreamServlet extends HttpServlet {
     public void broadcastStats(Map<String, Object> stats) {
         String jsonData = GSON.toJson(stats);
         
+        List<AsyncContext> failedClients = new ArrayList<>();
+        
         for (AsyncContext client : clients) {
             try {
                 PrintWriter out = client.getResponse().getWriter();
@@ -145,8 +233,13 @@ public class EventStreamServlet extends HttpServlet {
                 out.write("data: " + jsonData + "\n\n");
                 out.flush();
             } catch (Exception e) {
-                clients.remove(client);
+                failedClients.add(client);
             }
+        }
+        
+        // Clean up failed clients (removes from both clients and viewerInfoMap)
+        for (AsyncContext client : failedClients) {
+            removeClient(client);
         }
     }
     
@@ -171,5 +264,43 @@ public class EventStreamServlet extends HttpServlet {
      */
     public int getClientCount() {
         return clients.size();
+    }
+    
+    /**
+     * Gets information about all current viewers.
+     */
+    public List<Map<String, Object>> getViewers() {
+        List<Map<String, Object>> viewers = new ArrayList<>();
+        for (ViewerInfo info : viewerInfoMap.values()) {
+            Map<String, Object> viewer = new LinkedHashMap<>();
+            viewer.put("id", info.getViewerId());
+            viewer.put("ip", info.getIpAddress());
+            viewer.put("connectedAt", info.getConnectedAtFormatted());
+            viewers.add(viewer);
+        }
+        return viewers;
+    }
+    
+    /**
+     * Broadcasts the current viewer list to all connected clients.
+     */
+    public void broadcastViewers() {
+        Map<String, Object> viewerData = new LinkedHashMap<>();
+        viewerData.put("count", clients.size());
+        viewerData.put("maxClients", MAX_SSE_CLIENTS);
+        viewerData.put("viewers", getViewers());
+        
+        String jsonData = GSON.toJson(viewerData);
+        
+        for (AsyncContext client : clients) {
+            try {
+                PrintWriter out = client.getResponse().getWriter();
+                out.write("event: viewers\n");
+                out.write("data: " + jsonData + "\n\n");
+                out.flush();
+            } catch (Exception e) {
+                // Client may have disconnected, will be cleaned up
+            }
+        }
     }
 }
