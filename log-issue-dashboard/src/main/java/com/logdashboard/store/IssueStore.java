@@ -15,6 +15,9 @@ import java.util.stream.Collectors;
 /**
  * Thread-safe store for log issues that supports web access.
  * Provides statistics and filtering capabilities for the dashboard.
+ * 
+ * Memory optimization: enforces maximum issue limit and provides
+ * efficient access patterns to minimize GC pressure.
  */
 public class IssueStore {
     
@@ -25,13 +28,18 @@ public class IssueStore {
     private final Map<Severity, AtomicLong> severityCounts;
     private final Map<String, AtomicLong> serverCounts;
     
+    // Maximum limits to prevent memory exhaustion
+    private static final int MAX_LISTENERS = 100;
+    private static final int MAX_FILTER_RESULTS = 10000;
+    
     public interface IssueListener {
         void onNewIssue(LogIssue issue);
     }
     
     public IssueStore(int maxIssues) {
+        // Enforce a reasonable maximum to prevent memory exhaustion
+        this.maxIssues = Math.min(maxIssues, 50000);
         this.issues = new ConcurrentLinkedDeque<>();
-        this.maxIssues = maxIssues;
         this.listeners = new CopyOnWriteArrayList<>();
         this.totalIssuesCount = new AtomicLong(0);
         this.severityCounts = new ConcurrentHashMap<>();
@@ -75,9 +83,15 @@ public class IssueStore {
     
     /**
      * Adds a listener for new issues (for WebSocket or SSE).
+     * Returns false if max listeners limit reached.
      */
-    public void addListener(IssueListener listener) {
+    public boolean addListener(IssueListener listener) {
+        if (listeners.size() >= MAX_LISTENERS) {
+            System.err.println("Warning: Max listeners limit (" + MAX_LISTENERS + ") reached, rejecting new listener");
+            return false;
+        }
         listeners.add(listener);
+        return true;
     }
     
     /**
@@ -146,10 +160,15 @@ public class IssueStore {
     
     /**
      * Gets issues with combined filters (severity, server, date range).
+     * Enforces maximum result limit to prevent memory exhaustion.
      */
     public List<LogIssue> getFilteredIssues(Severity severity, String serverName, 
                                              LocalDateTime from, LocalDateTime to,
                                              int offset, int limit) {
+        // Enforce maximum limit to prevent memory exhaustion
+        int effectiveLimit = Math.min(limit, MAX_FILTER_RESULTS);
+        int effectiveOffset = Math.max(0, offset);
+        
         return issues.stream()
                 .filter(i -> severity == null || i.getSeverity() == severity)
                 .filter(i -> serverName == null || serverName.isEmpty() || serverName.equals(i.getServerName()))
@@ -157,8 +176,8 @@ public class IssueStore {
                     LocalDateTime dt = i.getDetectedAt();
                     return (from == null || !dt.isBefore(from)) && (to == null || !dt.isAfter(to));
                 })
-                .skip(offset)
-                .limit(limit)
+                .skip(effectiveOffset)
+                .limit(effectiveLimit)
                 .collect(Collectors.toList());
     }
     

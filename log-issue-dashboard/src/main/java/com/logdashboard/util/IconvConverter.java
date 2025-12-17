@@ -183,15 +183,28 @@ public class IconvConverter {
      */
     public static String readEbcdicFilePortion(Path filePath, long startPosition, String ebcdicEncoding) 
             throws IOException {
-        // Read bytes from the position
-        byte[] allBytes = Files.readAllBytes(filePath);
-        if (startPosition >= allBytes.length) {
+        // Only read the bytes we need starting from the position (memory efficient)
+        long fileSize = Files.size(filePath);
+        if (startPosition >= fileSize) {
             return "";
         }
         
-        int length = (int) (allBytes.length - startPosition);
-        byte[] portion = new byte[length];
-        System.arraycopy(allBytes, (int) startPosition, portion, 0, length);
+        long bytesToRead = fileSize - startPosition;
+        // Limit max read size to prevent memory exhaustion (16MB max per read)
+        int maxReadSize = 16 * 1024 * 1024;
+        int readSize = (int) Math.min(bytesToRead, maxReadSize);
+        
+        byte[] portion = new byte[readSize];
+        try (RandomAccessFile raf = new RandomAccessFile(filePath.toFile(), "r")) {
+            raf.seek(startPosition);
+            int bytesRead = raf.read(portion);
+            if (bytesRead < readSize) {
+                // Trim array if we read less than expected
+                byte[] trimmed = new byte[bytesRead];
+                System.arraycopy(portion, 0, trimmed, 0, bytesRead);
+                portion = trimmed;
+            }
+        }
         
         return convertToUtf8(portion, ebcdicEncoding);
     }

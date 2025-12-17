@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
 
 /**
  * Watches specified directories for log file changes and detects issues.
+ * Memory optimization: limits the number of tracked files and buffer sizes.
  */
 public class LogFileWatcher {
     
@@ -39,6 +40,11 @@ public class LogFileWatcher {
     
     // Track dynamically added server paths for polling
     private final List<ServerPath> dynamicServerPaths;
+    
+    // Memory limits
+    private static final int MAX_TRACKED_FILES = 1000;
+    private static final int MAX_READ_BUFFER_SIZE = 64 * 1024;  // 64KB max per read
+    private static final int MAX_LINES_PER_READ = 10000;  // Limit lines processed per read
     
     private volatile boolean running;
     
@@ -194,9 +200,16 @@ public class LogFileWatcher {
     /**
      * Initializes tracking for a file (sets position to end of file).
      * If charset is UTF-8 (the default), attempts to auto-detect encoding.
+     * Enforces maximum tracked files limit to prevent memory exhaustion.
      */
     private void initializeFile(Path file, String serverName, Charset charset, 
                                 String iconvEncoding, boolean useIconv) {
+        // Check if we've reached the maximum number of tracked files
+        if (filePositions.size() >= MAX_TRACKED_FILES) {
+            updateStatus("Warning: Maximum tracked files limit (" + MAX_TRACKED_FILES + ") reached. Skipping: " + file.getFileName());
+            return;
+        }
+        
         try {
             // Auto-detect encoding if not explicitly configured (UTF-8 is the default)
             Charset effectiveCharset = charset;
@@ -217,7 +230,11 @@ public class LogFileWatcher {
             }
             
             long size = Files.size(file);
-            int lineCount = countLines(file, effectiveCharset, effectiveIconvEncoding, effectiveUseIconv);
+            // Skip counting lines for very large files to reduce CPU usage at startup
+            int lineCount = 0;
+            if (size < 10 * 1024 * 1024) {  // Only count lines for files < 10MB
+                lineCount = countLines(file, effectiveCharset, effectiveIconvEncoding, effectiveUseIconv);
+            }
             filePositions.put(file, size);
             fileLineNumbers.put(file, lineCount);
             if (serverName != null) {
@@ -447,6 +464,7 @@ public class LogFileWatcher {
     /**
      * Reads new lines from a file starting from a given position.
      * Supports iconv-based conversion for better EBCDIC compatibility.
+     * Memory optimization: limits buffer size and number of lines read.
      */
     private List<String> readNewLines(Path file, long startPosition, Charset charset,
                                       String iconvEncoding, boolean useIconv) throws IOException {
@@ -461,12 +479,12 @@ public class LogFileWatcher {
                 return lines;
             }
             
-            // Use a reasonable buffer size
-            int bufferSize = (int) Math.min(remaining, 64 * 1024); // Max 64KB chunks
+            // Use a reasonable buffer size (capped at MAX_READ_BUFFER_SIZE)
+            int bufferSize = (int) Math.min(remaining, MAX_READ_BUFFER_SIZE);
             ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
-            StringBuilder currentLine = new StringBuilder();
+            StringBuilder currentLine = new StringBuilder(256);  // Pre-size for typical line length
             
-            while (channel.read(buffer) > 0) {
+            while (channel.read(buffer) > 0 && lines.size() < MAX_LINES_PER_READ) {
                 buffer.flip();
                 
                 // Decode bytes using the specified charset or iconv
@@ -487,8 +505,8 @@ public class LogFileWatcher {
                     content = new String(bytes, charset);
                 }
                 
-                // Split into lines
-                for (int i = 0; i < content.length(); i++) {
+                // Split into lines with line count limit check
+                for (int i = 0; i < content.length() && lines.size() < MAX_LINES_PER_READ; i++) {
                     char c = content.charAt(i);
                     if (c == '\n') {
                         lines.add(currentLine.toString());
@@ -502,15 +520,18 @@ public class LogFileWatcher {
                             currentLine.setLength(0);
                         }
                     } else {
-                        currentLine.append(c);
+                        // Limit line length to prevent memory issues with very long lines
+                        if (currentLine.length() < 10000) {
+                            currentLine.append(c);
+                        }
                     }
                 }
                 
                 buffer.clear();
             }
             
-            // Add any remaining content as the last line
-            if (currentLine.length() > 0) {
+            // Add any remaining content as the last line (if under limit)
+            if (currentLine.length() > 0 && lines.size() < MAX_LINES_PER_READ) {
                 lines.add(currentLine.toString());
             }
         }
