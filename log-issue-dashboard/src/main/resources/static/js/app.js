@@ -21,6 +21,7 @@ class LogDashboard {
             totalFiltered: 0
         };
         this.viewers = [];
+        this.myViewerId = null; // Unique ID assigned by server to identify self
         
         this.init();
     }
@@ -134,8 +135,13 @@ class LogDashboard {
         };
         
         this.eventSource.addEventListener('connected', (e) => {
-            console.log('Connection confirmed:', e.data);
+            const data = JSON.parse(e.data);
+            console.log('Connection confirmed:', data);
             this.updateConnectionStatus('connected');
+            // Store our unique viewer ID for self-identification
+            if (data.viewerId) {
+                this.myViewerId = data.viewerId;
+            }
         });
         
         this.eventSource.addEventListener('issue', (e) => {
@@ -196,12 +202,16 @@ class LogDashboard {
         if (this.viewers.length === 0) {
             listEl.innerHTML = '<div class="viewer-item">No viewers</div>';
         } else {
-            listEl.innerHTML = this.viewers.map((viewer, index) => `
-                <div class="viewer-item${index === 0 ? ' self' : ''}">
-                    <span class="viewer-ip">${this.escapeHtml(viewer.ip)}</span>
-                    <span class="viewer-time">since ${viewer.connectedAt}</span>
-                </div>
-            `).join('');
+            // Use viewer ID to identify self, not arbitrary index
+            listEl.innerHTML = this.viewers.map(viewer => {
+                const isSelf = this.myViewerId && viewer.id === this.myViewerId;
+                return `
+                    <div class="viewer-item${isSelf ? ' self' : ''}">
+                        <span class="viewer-ip">${this.escapeHtml(viewer.ip)}</span>
+                        <span class="viewer-time">since ${viewer.connectedAt}</span>
+                    </div>
+                `;
+            }).join('');
         }
     }
     

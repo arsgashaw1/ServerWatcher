@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -58,12 +59,18 @@ public class EventStreamServlet extends HttpServlet {
      * Information about a viewer (connected client).
      */
     public static class ViewerInfo {
+        private final String viewerId;
         private final String ipAddress;
         private final LocalDateTime connectedAt;
         
         public ViewerInfo(String ipAddress) {
+            this.viewerId = UUID.randomUUID().toString().substring(0, 8);
             this.ipAddress = ipAddress;
             this.connectedAt = LocalDateTime.now();
+        }
+        
+        public String getViewerId() {
+            return viewerId;
         }
         
         public String getIpAddress() {
@@ -102,15 +109,15 @@ public class EventStreamServlet extends HttpServlet {
         AsyncContext asyncContext = req.startAsync();
         asyncContext.setTimeout(0); // No timeout
         
-        // Get client IP address
+        // Get client IP address and create viewer info
         String clientIp = getClientIpAddress(req);
         ViewerInfo viewerInfo = new ViewerInfo(clientIp);
         
-        // Send initial connection event
+        // Send initial connection event with viewer's own ID
         try {
             PrintWriter out = resp.getWriter();
             out.write("event: connected\n");
-            out.write("data: {\"status\":\"connected\",\"clientCount\":" + (clients.size() + 1) + ",\"maxClients\":" + MAX_SSE_CLIENTS + "}\n\n");
+            out.write("data: {\"status\":\"connected\",\"viewerId\":\"" + viewerInfo.getViewerId() + "\",\"clientCount\":" + (clients.size() + 1) + ",\"maxClients\":" + MAX_SSE_CLIENTS + "}\n\n");
             out.flush();
             
             // Add to active clients and viewer map
@@ -185,6 +192,8 @@ public class EventStreamServlet extends HttpServlet {
         Map<String, Object> eventData = issueToMap(issue);
         String jsonData = GSON.toJson(eventData);
         
+        List<AsyncContext> failedClients = new ArrayList<>();
+        
         for (AsyncContext client : clients) {
             try {
                 PrintWriter out = client.getResponse().getWriter();
@@ -193,17 +202,19 @@ public class EventStreamServlet extends HttpServlet {
                 out.flush();
                 
                 if (out.checkError()) {
-                    clients.remove(client);
-                    try {
-                        client.complete();
-                    } catch (Exception ignored) {}
+                    failedClients.add(client);
                 }
             } catch (Exception e) {
-                clients.remove(client);
-                try {
-                    client.complete();
-                } catch (Exception ignored) {}
+                failedClients.add(client);
             }
+        }
+        
+        // Clean up failed clients (removes from both clients and viewerInfoMap)
+        for (AsyncContext client : failedClients) {
+            removeClient(client);
+            try {
+                client.complete();
+            } catch (Exception ignored) {}
         }
     }
     
@@ -213,6 +224,8 @@ public class EventStreamServlet extends HttpServlet {
     public void broadcastStats(Map<String, Object> stats) {
         String jsonData = GSON.toJson(stats);
         
+        List<AsyncContext> failedClients = new ArrayList<>();
+        
         for (AsyncContext client : clients) {
             try {
                 PrintWriter out = client.getResponse().getWriter();
@@ -220,8 +233,13 @@ public class EventStreamServlet extends HttpServlet {
                 out.write("data: " + jsonData + "\n\n");
                 out.flush();
             } catch (Exception e) {
-                clients.remove(client);
+                failedClients.add(client);
             }
+        }
+        
+        // Clean up failed clients (removes from both clients and viewerInfoMap)
+        for (AsyncContext client : failedClients) {
+            removeClient(client);
         }
     }
     
@@ -255,6 +273,7 @@ public class EventStreamServlet extends HttpServlet {
         List<Map<String, Object>> viewers = new ArrayList<>();
         for (ViewerInfo info : viewerInfoMap.values()) {
             Map<String, Object> viewer = new LinkedHashMap<>();
+            viewer.put("id", info.getViewerId());
             viewer.put("ip", info.getIpAddress());
             viewer.put("connectedAt", info.getConnectedAtFormatted());
             viewers.add(viewer);
