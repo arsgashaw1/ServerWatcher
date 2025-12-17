@@ -40,11 +40,19 @@ public class ApiServlet extends HttpServlet {
     private final IssueStore issueStore;
     private final AnalysisService analysisService;
     private final DashboardConfig config;
+    private EventStreamServlet eventStreamServlet;
     
     public ApiServlet(IssueStore issueStore, AnalysisService analysisService, DashboardConfig config) {
         this.issueStore = issueStore;
         this.analysisService = analysisService;
         this.config = config;
+    }
+    
+    /**
+     * Sets the event stream servlet reference for viewer tracking.
+     */
+    public void setEventStreamServlet(EventStreamServlet eventStreamServlet) {
+        this.eventStreamServlet = eventStreamServlet;
     }
     
     @Override
@@ -101,6 +109,9 @@ public class ApiServlet extends HttpServlet {
                     break;
                 case "/encoding/detect":
                     handleDetectEncoding(req, out);
+                    break;
+                case "/viewers":
+                    handleGetViewers(out);
                     break;
                 default:
                     if (pathInfo.startsWith("/issues/")) {
@@ -312,6 +323,18 @@ public class ApiServlet extends HttpServlet {
         health.put("timestamp", System.currentTimeMillis());
         health.put("issueCount", issueStore.getCurrentIssuesCount());
         out.write(GSON.toJson(health));
+    }
+    
+    private void handleGetViewers(PrintWriter out) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        if (eventStreamServlet != null) {
+            response.put("count", eventStreamServlet.getClientCount());
+            response.put("viewers", eventStreamServlet.getViewers());
+        } else {
+            response.put("count", 0);
+            response.put("viewers", new ArrayList<>());
+        }
+        out.write(GSON.toJson(response));
     }
     
     private void handleGetDateRange(PrintWriter out) {

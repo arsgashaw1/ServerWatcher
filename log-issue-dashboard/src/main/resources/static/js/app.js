@@ -20,6 +20,7 @@ class LogDashboard {
             total: 0,
             totalFiltered: 0
         };
+        this.viewers = [];
         
         this.init();
     }
@@ -148,6 +149,11 @@ class LogDashboard {
             this.displayStats(stats);
         });
         
+        this.eventSource.addEventListener('viewers', (e) => {
+            const data = JSON.parse(e.data);
+            this.updateViewers(data);
+        });
+        
         this.eventSource.onerror = () => {
             console.log('SSE error, reconnecting...');
             this.updateConnectionStatus('disconnected');
@@ -175,6 +181,27 @@ class LogDashboard {
                 break;
             default:
                 textEl.textContent = 'Connecting...';
+        }
+    }
+    
+    // Viewer tracking
+    updateViewers(data) {
+        this.viewers = data.viewers || [];
+        
+        // Update count
+        document.getElementById('viewersCount').textContent = data.count || 0;
+        
+        // Update dropdown list
+        const listEl = document.getElementById('viewersList');
+        if (this.viewers.length === 0) {
+            listEl.innerHTML = '<div class="viewer-item">No viewers</div>';
+        } else {
+            listEl.innerHTML = this.viewers.map((viewer, index) => `
+                <div class="viewer-item${index === 0 ? ' self' : ''}">
+                    <span class="viewer-ip">${this.escapeHtml(viewer.ip)}</span>
+                    <span class="viewer-time">since ${viewer.connectedAt}</span>
+                </div>
+            `).join('');
         }
     }
     
