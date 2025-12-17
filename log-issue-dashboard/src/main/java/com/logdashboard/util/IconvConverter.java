@@ -198,6 +198,10 @@ public class IconvConverter {
         try (RandomAccessFile raf = new RandomAccessFile(filePath.toFile(), "r")) {
             raf.seek(startPosition);
             int bytesRead = raf.read(portion);
+            // Handle EOF (-1) or empty read (0) - can happen if file was truncated after size check
+            if (bytesRead <= 0) {
+                return "";
+            }
             if (bytesRead < readSize) {
                 // Trim array if we read less than expected
                 byte[] trimmed = new byte[bytesRead];

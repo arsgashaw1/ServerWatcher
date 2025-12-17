@@ -48,6 +48,20 @@ public class LogFileWatcher {
     
     private volatile boolean running;
     
+    /**
+     * Result of reading new lines from a file.
+     * Contains both the lines read and the actual byte position reached.
+     */
+    private static class ReadResult {
+        final List<String> lines;
+        final long bytesRead;
+        
+        ReadResult(List<String> lines, long bytesRead) {
+            this.lines = lines;
+            this.bytesRead = bytesRead;
+        }
+    }
+    
     public LogFileWatcher(DashboardConfig config, Consumer<LogIssue> issueCallback, 
                           Consumer<String> statusCallback) {
         this.config = config;
@@ -418,13 +432,13 @@ public class LogFileWatcher {
             
             if (currentSize > lastPosition) {
                 // File has grown - read new content
-                List<String> newLines = readNewLines(file, lastPosition, charset, iconvEncoding, useIconv);
+                ReadResult result = readNewLinesWithPosition(file, lastPosition, charset, iconvEncoding, useIconv);
                 
-                if (!newLines.isEmpty()) {
+                if (!result.lines.isEmpty()) {
                     List<LogIssue> issues = parser.parseLines(
                         serverName,
                         file.getFileName().toString(),
-                        newLines,
+                        result.lines,
                         lastLineNumber + 1
                     );
                     
@@ -432,10 +446,12 @@ public class LogFileWatcher {
                         issueCallback.accept(issue);
                     }
                     
-                    fileLineNumbers.put(file, lastLineNumber + newLines.size());
+                    fileLineNumbers.put(file, lastLineNumber + result.lines.size());
                 }
                 
-                filePositions.put(file, currentSize);
+                // Update position to actual bytes read, not currentSize
+                // This prevents data loss if line limit was reached before end of file
+                filePositions.put(file, lastPosition + result.bytesRead);
             } else if (currentSize < lastPosition) {
                 // File was truncated or rotated - reset tracking
                 String serverInfo = serverName != null ? " [" + serverName + "]" : "";
@@ -458,17 +474,21 @@ public class LogFileWatcher {
      * Supports various encodings including EBCDIC.
      */
     private List<String> readNewLines(Path file, long startPosition, Charset charset) throws IOException {
-        return readNewLines(file, startPosition, charset, null, false);
+        return readNewLinesWithPosition(file, startPosition, charset, null, false).lines;
     }
     
     /**
      * Reads new lines from a file starting from a given position.
      * Supports iconv-based conversion for better EBCDIC compatibility.
      * Memory optimization: limits buffer size and number of lines read.
+     * 
+     * Returns a ReadResult containing both the lines and actual bytes read,
+     * to prevent data loss when line limit is reached before end of file.
      */
-    private List<String> readNewLines(Path file, long startPosition, Charset charset,
+    private ReadResult readNewLinesWithPosition(Path file, long startPosition, Charset charset,
                                       String iconvEncoding, boolean useIconv) throws IOException {
         List<String> lines = new ArrayList<>();
+        long totalBytesRead = 0;
         
         try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
             channel.position(startPosition);
@@ -476,15 +496,17 @@ public class LogFileWatcher {
             // Read remaining content
             long remaining = channel.size() - startPosition;
             if (remaining <= 0) {
-                return lines;
+                return new ReadResult(lines, 0);
             }
             
             // Use a reasonable buffer size (capped at MAX_READ_BUFFER_SIZE)
             int bufferSize = (int) Math.min(remaining, MAX_READ_BUFFER_SIZE);
             ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
             StringBuilder currentLine = new StringBuilder(256);  // Pre-size for typical line length
+            int bytesInCurrentLine = 0;  // Track bytes for the incomplete line
             
-            while (channel.read(buffer) > 0 && lines.size() < MAX_LINES_PER_READ) {
+            int bytesReadThisChunk;
+            while ((bytesReadThisChunk = channel.read(buffer)) > 0 && lines.size() < MAX_LINES_PER_READ) {
                 buffer.flip();
                 
                 // Decode bytes using the specified charset or iconv
@@ -506,11 +528,21 @@ public class LogFileWatcher {
                 }
                 
                 // Split into lines with line count limit check
-                for (int i = 0; i < content.length() && lines.size() < MAX_LINES_PER_READ; i++) {
+                int lastLineEndByte = 0;  // Track position of last complete line
+                for (int i = 0; i < content.length(); i++) {
+                    if (lines.size() >= MAX_LINES_PER_READ) {
+                        // We've hit the line limit - stop processing but account for bytes read
+                        // Only count bytes up to the last complete line
+                        totalBytesRead += lastLineEndByte;
+                        return new ReadResult(lines, totalBytesRead);
+                    }
+                    
                     char c = content.charAt(i);
                     if (c == '\n') {
                         lines.add(currentLine.toString());
                         currentLine.setLength(0);
+                        bytesInCurrentLine = 0;
+                        lastLineEndByte = i + 1;  // +1 to include the newline
                     } else if (c == '\r') {
                         // Handle \r\n or standalone \r
                         if (i + 1 < content.length() && content.charAt(i + 1) == '\n') {
@@ -518,15 +550,20 @@ public class LogFileWatcher {
                         } else {
                             lines.add(currentLine.toString());
                             currentLine.setLength(0);
+                            bytesInCurrentLine = 0;
+                            lastLineEndByte = i + 1;
                         }
                     } else {
                         // Limit line length to prevent memory issues with very long lines
                         if (currentLine.length() < 10000) {
                             currentLine.append(c);
                         }
+                        bytesInCurrentLine++;
                     }
                 }
                 
+                // If we processed all content in this chunk, add to total bytes
+                totalBytesRead += bytesReadThisChunk;
                 buffer.clear();
             }
             
@@ -536,7 +573,7 @@ public class LogFileWatcher {
             }
         }
         
-        return lines;
+        return new ReadResult(lines, totalBytesRead);
     }
     
     /**
