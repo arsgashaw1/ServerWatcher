@@ -20,12 +20,16 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Server-Sent Events (SSE) servlet for real-time issue streaming.
  * Clients can subscribe to receive new issues as they occur.
+ * Memory optimization: limits maximum concurrent SSE connections.
  */
 public class EventStreamServlet extends HttpServlet {
     
     private static final Gson GSON = new GsonBuilder()
             .setDateFormat("yyyy-MM-dd'T'HH:mm:ss")
             .create();
+    
+    // Maximum concurrent SSE connections to prevent memory exhaustion
+    private static final int MAX_SSE_CLIENTS = 100;
     
     private final IssueStore issueStore;
     private final CopyOnWriteArrayList<AsyncContext> clients;
@@ -42,6 +46,14 @@ public class EventStreamServlet extends HttpServlet {
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) 
             throws ServletException, IOException {
         
+        // Check if we've reached the maximum number of SSE clients
+        if (clients.size() >= MAX_SSE_CLIENTS) {
+            resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            resp.setContentType("application/json");
+            resp.getWriter().write("{\"error\":\"Maximum SSE connections reached. Please try again later.\"}");
+            return;
+        }
+        
         // Set up SSE response headers
         resp.setContentType("text/event-stream");
         resp.setCharacterEncoding("UTF-8");
@@ -57,7 +69,7 @@ public class EventStreamServlet extends HttpServlet {
         try {
             PrintWriter out = resp.getWriter();
             out.write("event: connected\n");
-            out.write("data: {\"status\":\"connected\",\"clientCount\":" + (clients.size() + 1) + "}\n\n");
+            out.write("data: {\"status\":\"connected\",\"clientCount\":" + (clients.size() + 1) + ",\"maxClients\":" + MAX_SSE_CLIENTS + "}\n\n");
             out.flush();
             
             // Add to active clients

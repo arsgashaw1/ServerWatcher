@@ -8,12 +8,14 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
  * Provides analysis and insights on log issues.
+ * Uses caching to reduce CPU usage from repeated calculations.
  */
 public class AnalysisService {
     
@@ -21,107 +23,268 @@ public class AnalysisService {
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm");
     
+    // Cache for dashboard stats - expires after 2 seconds to balance freshness vs CPU
+    private static final long CACHE_TTL_MS = 2000;
+    private final AtomicReference<CachedStats> cachedDashboardStats = new AtomicReference<>();
+    private final AtomicReference<CachedReport> cachedAnalysisReport = new AtomicReference<>();
+    
+    private static class CachedStats {
+        final DashboardStats stats;
+        final long timestamp;
+        final int issueCount;
+        
+        CachedStats(DashboardStats stats, int issueCount) {
+            this.stats = stats;
+            this.timestamp = System.currentTimeMillis();
+            this.issueCount = issueCount;
+        }
+        
+        boolean isValid(int currentIssueCount) {
+            return System.currentTimeMillis() - timestamp < CACHE_TTL_MS 
+                   && issueCount == currentIssueCount;
+        }
+    }
+    
+    private static class CachedReport {
+        final AnalysisReport report;
+        final long timestamp;
+        final int issueCount;
+        
+        CachedReport(AnalysisReport report, int issueCount) {
+            this.report = report;
+            this.timestamp = System.currentTimeMillis();
+            this.issueCount = issueCount;
+        }
+        
+        boolean isValid(int currentIssueCount) {
+            // Analysis report can be cached longer (5 seconds) since it's expensive
+            return System.currentTimeMillis() - timestamp < 5000 
+                   && issueCount == currentIssueCount;
+        }
+    }
+    
     public AnalysisService(IssueStore issueStore) {
         this.issueStore = issueStore;
     }
     
     /**
      * Gets comprehensive dashboard statistics.
+     * Uses caching to reduce CPU usage on repeated calls.
      */
     public DashboardStats getDashboardStats() {
+        int currentCount = issueStore.getCurrentIssuesCount();
+        
+        // Check cache first
+        CachedStats cached = cachedDashboardStats.get();
+        if (cached != null && cached.isValid(currentCount)) {
+            return cached.stats;
+        }
+        
+        // Get all issues once and compute all stats in a single pass where possible
         List<LogIssue> allIssues = issueStore.getAllIssues();
-        List<LogIssue> last5Min = issueStore.getRecentIssues(5);
-        List<LogIssue> lastHour = issueStore.getRecentIssues(60);
-        List<LogIssue> last24Hours = issueStore.getRecentIssues(1440);
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime cutoff5Min = now.minusMinutes(5);
+        LocalDateTime cutoff1Hour = now.minusMinutes(60);
+        LocalDateTime cutoff24Hours = now.minusMinutes(1440);
         
         DashboardStats stats = new DashboardStats();
         stats.totalIssues = allIssues.size();
-        stats.issuesLast5Min = last5Min.size();
-        stats.issuesLastHour = lastHour.size();
-        stats.issuesLast24Hours = last24Hours.size();
         
-        // Count by severity
-        stats.criticalCount = countBySeverity(allIssues, Severity.CRITICAL);
-        stats.exceptionCount = countBySeverity(allIssues, Severity.EXCEPTION);
-        stats.errorCount = countBySeverity(allIssues, Severity.ERROR);
-        stats.warningCount = countBySeverity(allIssues, Severity.WARNING);
+        // Count all metrics in a single pass over the issues
+        int last5MinCount = 0, lastHourCount = 0, last24HoursCount = 0;
+        int criticalCount = 0, exceptionCount = 0, errorCount = 0, warningCount = 0;
+        int unacknowledgedCount = 0;
+        Map<String, Integer> serverBreakdown = new HashMap<>();
+        Map<String, Integer> exceptionTypes = new HashMap<>();
+        Map<String, Integer> affectedFiles = new HashMap<>();
+        Set<String> activeServers = new HashSet<>();
         
-        // Recent trend (issues per minute in last 10 minutes)
-        stats.recentTrend = calculateMinutelyTrend(10);
+        for (LogIssue issue : allIssues) {
+            LocalDateTime detectedAt = issue.getDetectedAt();
+            
+            // Time-based counts
+            if (detectedAt.isAfter(cutoff5Min)) last5MinCount++;
+            if (detectedAt.isAfter(cutoff1Hour)) lastHourCount++;
+            if (detectedAt.isAfter(cutoff24Hours)) last24HoursCount++;
+            
+            // Severity counts
+            switch (issue.getSeverity()) {
+                case CRITICAL: criticalCount++; break;
+                case EXCEPTION: exceptionCount++; break;
+                case ERROR: errorCount++; break;
+                case WARNING: warningCount++; break;
+            }
+            
+            // Acknowledged status
+            if (!issue.isAcknowledged()) unacknowledgedCount++;
+            
+            // Server breakdown
+            String server = issue.getServerName() != null ? issue.getServerName() : "Unknown";
+            serverBreakdown.merge(server, 1, Integer::sum);
+            if (issue.getServerName() != null) activeServers.add(issue.getServerName());
+            
+            // Exception types
+            exceptionTypes.merge(issue.getIssueType(), 1, Integer::sum);
+            
+            // Affected files
+            affectedFiles.merge(issue.getFileName(), 1, Integer::sum);
+        }
         
-        // Hourly trend for last 24 hours
-        stats.hourlyTrend = calculateHourlyTrend(24);
+        stats.issuesLast5Min = last5MinCount;
+        stats.issuesLastHour = lastHourCount;
+        stats.issuesLast24Hours = last24HoursCount;
+        stats.criticalCount = criticalCount;
+        stats.exceptionCount = exceptionCount;
+        stats.errorCount = errorCount;
+        stats.warningCount = warningCount;
+        stats.unacknowledgedCount = unacknowledgedCount;
+        stats.activeServersCount = activeServers.size();
+        stats.issueRatePerMinute = lastHourCount / 60.0;
         
-        // Server breakdown
-        stats.serverBreakdown = calculateServerBreakdown(allIssues);
+        // Sort and limit results
+        stats.serverBreakdown = sortAndLimit(serverBreakdown, Integer.MAX_VALUE);
+        stats.topExceptionTypes = sortAndLimit(exceptionTypes, 5);
+        stats.mostAffectedFiles = sortAndLimit(affectedFiles, 5);
         
-        // Top exception types
-        stats.topExceptionTypes = getTopExceptionTypes(allIssues, 5);
+        // Trends require time-bucketing (still needs separate iteration but more efficient)
+        stats.recentTrend = calculateMinutelyTrendEfficient(allIssues, 10);
+        stats.hourlyTrend = calculateHourlyTrendEfficient(allIssues, 24);
         
-        // Most affected files
-        stats.mostAffectedFiles = getMostAffectedFiles(allIssues, 5);
-        
-        // Active servers count
-        stats.activeServersCount = issueStore.getActiveServers().size();
-        
-        // Issue rate (issues per minute average in last hour)
-        stats.issueRatePerMinute = lastHour.size() / 60.0;
-        
-        // Unacknowledged count
-        stats.unacknowledgedCount = (int) allIssues.stream()
-                .filter(i -> !i.isAcknowledged())
-                .count();
+        // Cache the results
+        cachedDashboardStats.set(new CachedStats(stats, currentCount));
         
         return stats;
     }
     
+    private Map<String, Integer> sortAndLimit(Map<String, Integer> map, int limit) {
+        return map.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .limit(limit)
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        Map.Entry::getValue,
+                        (e1, e2) -> e1,
+                        LinkedHashMap::new
+                ));
+    }
+    
     /**
      * Gets detailed analysis report.
+     * Uses caching to reduce CPU usage since this is an expensive operation.
      */
     public AnalysisReport getAnalysisReport() {
+        int currentCount = issueStore.getCurrentIssuesCount();
+        
+        // Check cache first
+        CachedReport cached = cachedAnalysisReport.get();
+        if (cached != null && cached.isValid(currentCount)) {
+            return cached.report;
+        }
+        
         List<LogIssue> allIssues = issueStore.getAllIssues();
         
         AnalysisReport report = new AnalysisReport();
         report.generatedAt = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         report.totalIssuesAnalyzed = allIssues.size();
         
+        // Single pass for severity counts and peak hours
+        int[] severityCounts = new int[Severity.values().length];
+        Map<Integer, Integer> hourCounts = new HashMap<>();
+        Map<String, Integer> serverCounts = new HashMap<>();
+        
+        for (LogIssue issue : allIssues) {
+            severityCounts[issue.getSeverity().ordinal()]++;
+            int hour = issue.getDetectedAt().getHour();
+            hourCounts.merge(hour, 1, Integer::sum);
+            String server = issue.getServerName() != null ? issue.getServerName() : "Unknown";
+            serverCounts.merge(server, 1, Integer::sum);
+        }
+        
         // Severity distribution
         report.severityDistribution = new LinkedHashMap<>();
         for (Severity s : Severity.values()) {
-            int count = countBySeverity(allIssues, s);
+            int count = severityCounts[s.ordinal()];
             double percentage = allIssues.isEmpty() ? 0 : (count * 100.0 / allIssues.size());
             report.severityDistribution.put(s.name(), new SeverityStats(count, percentage));
         }
         
-        // Pattern analysis - find common patterns
+        // Peak hours from pre-computed map
+        report.peakHours = hourCounts.entrySet().stream()
+                .sorted(Map.Entry.<Integer, Integer>comparingByValue().reversed())
+                .limit(3)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+        
+        // Server health from pre-computed counts
+        report.serverHealthScores = calculateServerHealthFromCounts(serverCounts);
+        
+        // Pattern analysis - find common patterns (limit iterations)
         report.commonPatterns = findCommonPatterns(allIssues, 10);
         
-        // Time-based analysis
-        report.peakHours = findPeakHours(allIssues);
+        // Recurring issues detection (limit to first 1000 issues to reduce CPU)
+        List<LogIssue> limitedIssues = allIssues.size() > 1000 ? allIssues.subList(0, 1000) : allIssues;
+        report.recurringIssues = detectRecurringIssues(limitedIssues, 3);
         
-        // Server health scores
-        report.serverHealthScores = calculateServerHealth(allIssues);
+        // Root cause candidates (limit to first 1000 issues)
+        report.rootCauseCandidates = identifyRootCauseCandidates(limitedIssues);
         
-        // Recurring issues detection
-        report.recurringIssues = detectRecurringIssues(allIssues, 3);
-        
-        // Root cause candidates
-        report.rootCauseCandidates = identifyRootCauseCandidates(allIssues);
+        // Cache the results
+        cachedAnalysisReport.set(new CachedReport(report, currentCount));
         
         return report;
     }
     
+    private Map<String, Double> calculateServerHealthFromCounts(Map<String, Integer> serverCounts) {
+        Map<String, Double> health = new LinkedHashMap<>();
+        int maxIssues = serverCounts.values().stream().max(Integer::compareTo).orElse(1);
+        
+        for (Map.Entry<String, Integer> entry : serverCounts.entrySet()) {
+            double healthScore = 100.0 * (1.0 - (double) entry.getValue() / maxIssues);
+            health.put(entry.getKey(), Math.round(healthScore * 10) / 10.0);
+        }
+        return health;
+    }
+    
     /**
      * Detects anomalies in issue patterns.
+     * Optimized to minimize redundant iterations.
      */
     public List<Anomaly> detectAnomalies() {
         List<Anomaly> anomalies = new ArrayList<>();
         List<LogIssue> allIssues = issueStore.getAllIssues();
         
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime cutoff5Min = now.minusMinutes(5);
+        LocalDateTime cutoff30Min = now.minusMinutes(30);
+        
+        // Single pass to collect all needed data
+        List<LogIssue> last5Min = new ArrayList<>();
+        int previous30MinCount = 0;
+        Set<String> recentTypes = new HashSet<>();
+        Set<String> historicalTypes = new HashSet<>();
+        Map<String, Integer> serverCountsLast5Min = new HashMap<>();
+        
+        for (LogIssue issue : allIssues) {
+            LocalDateTime detectedAt = issue.getDetectedAt();
+            
+            if (detectedAt.isAfter(cutoff5Min)) {
+                last5Min.add(issue);
+                recentTypes.add(issue.getIssueType());
+                String server = issue.getServerName() != null ? issue.getServerName() : "Unknown";
+                serverCountsLast5Min.merge(server, 1, Integer::sum);
+            }
+            
+            if (detectedAt.isAfter(cutoff30Min)) {
+                previous30MinCount++;
+            }
+            
+            if (detectedAt.isBefore(cutoff5Min)) {
+                historicalTypes.add(issue.getIssueType());
+            }
+        }
+        
         // Check for sudden spike (more than 5x average in last 5 minutes)
-        List<LogIssue> last5Min = issueStore.getRecentIssues(5);
-        List<LogIssue> previous30Min = issueStore.getRecentIssues(30);
-        double avgPer5Min = previous30Min.size() / 6.0;
+        double avgPer5Min = previous30MinCount / 6.0;
         if (last5Min.size() > avgPer5Min * 5 && avgPer5Min > 0) {
             Anomaly spike = new Anomaly();
             spike.type = "SPIKE";
@@ -129,34 +292,24 @@ public class AnalysisService {
             spike.description = String.format("Issue spike detected: %d issues in last 5 min (avg: %.1f)", 
                     last5Min.size(), avgPer5Min);
             spike.affectedServers = getAffectedServers(last5Min);
-            spike.detectedAt = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            spike.detectedAt = now.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
             anomalies.add(spike);
         }
         
         // Check for new exception type
-        Set<String> recentTypes = last5Min.stream()
-                .map(LogIssue::getIssueType)
-                .collect(Collectors.toSet());
-        Set<String> historicalTypes = allIssues.stream()
-                .filter(i -> i.getDetectedAt().isBefore(LocalDateTime.now().minusMinutes(5)))
-                .map(LogIssue::getIssueType)
-                .collect(Collectors.toSet());
         recentTypes.removeAll(historicalTypes);
-        if (!recentTypes.isEmpty()) {
-            for (String newType : recentTypes) {
-                Anomaly newException = new Anomaly();
-                newException.type = "NEW_EXCEPTION";
-                newException.severity = "MEDIUM";
-                newException.description = "New exception type detected: " + newType;
-                newException.detectedAt = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-                anomalies.add(newException);
-            }
+        for (String newType : recentTypes) {
+            Anomaly newException = new Anomaly();
+            newException.type = "NEW_EXCEPTION";
+            newException.severity = "MEDIUM";
+            newException.description = "New exception type detected: " + newType;
+            newException.detectedAt = now.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            anomalies.add(newException);
         }
         
         // Check for single server having disproportionate issues
-        Map<String, Integer> serverCounts = calculateServerBreakdown(last5Min);
         int total = last5Min.size();
-        for (Map.Entry<String, Integer> entry : serverCounts.entrySet()) {
+        for (Map.Entry<String, Integer> entry : serverCountsLast5Min.entrySet()) {
             if (total > 10 && entry.getValue() > total * 0.8) {
                 Anomaly serverAnomaly = new Anomaly();
                 serverAnomaly.type = "SERVER_CONCENTRATION";
@@ -164,7 +317,7 @@ public class AnalysisService {
                 serverAnomaly.description = String.format("Server %s has %d%% of recent issues", 
                         entry.getKey(), (int)(entry.getValue() * 100.0 / total));
                 serverAnomaly.affectedServers = Collections.singletonList(entry.getKey());
-                serverAnomaly.detectedAt = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+                serverAnomaly.detectedAt = now.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
                 anomalies.add(serverAnomaly);
             }
         }
@@ -176,7 +329,10 @@ public class AnalysisService {
         return (int) issues.stream().filter(i -> i.getSeverity() == severity).count();
     }
     
-    private Map<String, Integer> calculateMinutelyTrend(int minutes) {
+    /**
+     * Efficient minutely trend calculation using pre-fetched issues list.
+     */
+    private Map<String, Integer> calculateMinutelyTrendEfficient(List<LogIssue> allIssues, int minutes) {
         LocalDateTime now = LocalDateTime.now();
         Map<String, Integer> trend = new LinkedHashMap<>();
         
@@ -186,18 +342,23 @@ public class AnalysisService {
         }
         
         LocalDateTime cutoff = now.minusMinutes(minutes);
-        for (LogIssue issue : issueStore.getAllIssues()) {
+        for (LogIssue issue : allIssues) {
             if (issue.getDetectedAt().isAfter(cutoff)) {
                 LocalDateTime minute = issue.getDetectedAt().truncatedTo(ChronoUnit.MINUTES);
                 String key = minute.format(TIME_FORMATTER);
-                trend.merge(key, 1, Integer::sum);
+                if (trend.containsKey(key)) {
+                    trend.merge(key, 1, Integer::sum);
+                }
             }
         }
         
         return trend;
     }
     
-    private Map<String, Integer> calculateHourlyTrend(int hours) {
+    /**
+     * Efficient hourly trend calculation using pre-fetched issues list.
+     */
+    private Map<String, Integer> calculateHourlyTrendEfficient(List<LogIssue> allIssues, int hours) {
         LocalDateTime now = LocalDateTime.now();
         Map<String, Integer> trend = new LinkedHashMap<>();
         
@@ -207,11 +368,13 @@ public class AnalysisService {
         }
         
         LocalDateTime cutoff = now.minusHours(hours);
-        for (LogIssue issue : issueStore.getAllIssues()) {
+        for (LogIssue issue : allIssues) {
             if (issue.getDetectedAt().isAfter(cutoff)) {
                 LocalDateTime hour = issue.getDetectedAt().truncatedTo(ChronoUnit.HOURS);
                 String key = hour.format(DATE_FORMATTER);
-                trend.merge(key, 1, Integer::sum);
+                if (trend.containsKey(key)) {
+                    trend.merge(key, 1, Integer::sum);
+                }
             }
         }
         
@@ -288,34 +451,8 @@ public class AnalysisService {
                 .collect(Collectors.toList());
     }
     
-    private List<Integer> findPeakHours(List<LogIssue> issues) {
-        Map<Integer, Integer> hourCounts = new HashMap<>();
-        for (LogIssue issue : issues) {
-            int hour = issue.getDetectedAt().getHour();
-            hourCounts.merge(hour, 1, Integer::sum);
-        }
-        
-        return hourCounts.entrySet().stream()
-                .sorted(Map.Entry.<Integer, Integer>comparingByValue().reversed())
-                .limit(3)
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toList());
-    }
-    
-    private Map<String, Double> calculateServerHealth(List<LogIssue> issues) {
-        Map<String, Integer> serverCounts = calculateServerBreakdown(issues);
-        Map<String, Double> health = new LinkedHashMap<>();
-        
-        int maxIssues = serverCounts.values().stream().max(Integer::compareTo).orElse(1);
-        
-        for (Map.Entry<String, Integer> entry : serverCounts.entrySet()) {
-            // Health score: 100 = no issues, 0 = max issues
-            double healthScore = 100.0 * (1.0 - (double) entry.getValue() / maxIssues);
-            health.put(entry.getKey(), Math.round(healthScore * 10) / 10.0);
-        }
-        
-        return health;
-    }
+    // findPeakHours and calculateServerHealth are now computed inline in getAnalysisReport()
+    // for better performance (single-pass computation)
     
     private List<RecurringIssue> detectRecurringIssues(List<LogIssue> issues, int minOccurrences) {
         Map<String, List<LogIssue>> grouped = new HashMap<>();
