@@ -1,45 +1,31 @@
 {
   "servers": [
     {
-      "serverName": "U3172QA",
-      "path": "/a/b/c",
-      "description": "QA Server logs"
+      "serverName": "MAT12Q3S",
+      "path": "/path/to/mat/logs",
+      "description": "MAT server logs with mixed encodings",
+      "encoding": "ISO8859-1",
+      "fileEncodings": {
+        "mat-extract.log": "IBM-1047",
+        "application-server.log": "ISO8859-1"
+      }
     },
     {
-      "serverName": "U3172PROD",
-      "path": "/u/prod/logs",
-      "description": "Production Server logs"
-    },
-    {
-      "serverName": "U3172DEV",
-      "path": "/u/dev/logs",
-      "description": "Development Server logs"
-    },
-    {
-      "serverName": "MAINFRAME-US",
-      "path": "/mainframe/logs",
-      "description": "IBM Mainframe US logs (EBCDIC) - uses Java charset",
-      "encoding": "EBCDIC"
-    },
-    {
-      "serverName": "MAINFRAME-ZOS",
+      "serverName": "ZOS-SERVER",
       "path": "/zos/logs",
-      "description": "z/OS Unix logs (EBCDIC-1047) - uses Java charset",
-      "encoding": "Cp1047"
+      "description": "z/OS EBCDIC logs - converted using: iconv -f IBM-1047 -t ISO8859-1",
+      "encoding": "IBM-1047"
     },
     {
-      "serverName": "MAINFRAME-ZOS-ICONV",
-      "path": "/zos/logs2",
-      "description": "z/OS Unix logs using iconv for better IBM compatibility",
-      "encoding": "IBM-1047",
-      "useIconv": true
+      "serverName": "LINUX-SERVER",
+      "path": "/var/log/app",
+      "description": "Linux server logs (UTF-8 default)"
     },
     {
-      "serverName": "MAINFRAME-ISO-TO-EBCDIC",
-      "path": "/mainframe/converted",
-      "description": "Files converted from ISO8859-1 to IBM-1047 via iconv",
-      "encoding": "IBM-1047",
-      "useIconv": true
+      "serverName": "LEGACY-SERVER",
+      "path": "/legacy/logs",
+      "description": "Legacy server logs (ISO8859-1 direct read)",
+      "encoding": "ISO8859-1"
     }
   ],
   "watchPaths": [],
@@ -68,6 +54,6 @@
   "pollingIntervalSeconds": 2,
   "maxIssuesDisplayed": 500,
   "enableSound": false,
-  "windowTitle": "Log Issue Dashboard",
+  "windowTitle": "Sentinel",
   "webServerPort": 8080
 }

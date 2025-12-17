@@ -3,6 +3,8 @@ package com.logdashboard.config;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.charset.UnsupportedCharsetException;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Represents a server and its associated log path to watch.
@@ -12,8 +14,12 @@ public class ServerPath {
     private String serverName;
     private String path;
     private String description;
-    private String encoding;  // Character encoding (e.g., "UTF-8", "Cp1047" for EBCDIC)
+    private String encoding;  // Default encoding for files (e.g., "UTF-8", "Cp1047" for EBCDIC)
     private boolean useIconv; // Whether to use external iconv command for encoding conversion
+    
+    // Per-file encoding overrides: filename pattern -> encoding
+    // Example: {"mat-extract.log": "IBM-1047", "application-server.log": "ISO8859-1"}
+    private Map<String, String> fileEncodings;
     
     // Common EBCDIC code pages (Java charset names)
     public static final String EBCDIC_US = "Cp037";      // US/Canada
@@ -96,6 +102,60 @@ public class ServerPath {
     
     public void setUseIconv(boolean useIconv) {
         this.useIconv = useIconv;
+    }
+    
+    public Map<String, String> getFileEncodings() {
+        return fileEncodings;
+    }
+    
+    public void setFileEncodings(Map<String, String> fileEncodings) {
+        this.fileEncodings = fileEncodings;
+    }
+    
+    /**
+     * Gets the encoding for a specific file.
+     * First checks fileEncodings map for a matching pattern, then falls back to default encoding.
+     * 
+     * @param fileName The name of the file
+     * @return The encoding for this file
+     */
+    public String getEncodingForFile(String fileName) {
+        if (fileEncodings != null && fileName != null) {
+            // Check for exact match first
+            if (fileEncodings.containsKey(fileName)) {
+                return fileEncodings.get(fileName);
+            }
+            // Check for pattern match (simple wildcard support)
+            for (Map.Entry<String, String> entry : fileEncodings.entrySet()) {
+                String pattern = entry.getKey();
+                if (pattern.contains("*")) {
+                    String regex = pattern.replace(".", "\\.").replace("*", ".*");
+                    if (fileName.matches(regex)) {
+                        return entry.getValue();
+                    }
+                }
+            }
+        }
+        // Fall back to default encoding
+        return encoding;
+    }
+    
+    /**
+     * Checks if the given encoding is EBCDIC/IBM mainframe encoding.
+     */
+    public static boolean isEbcdicEncoding(String enc) {
+        if (enc == null || enc.isEmpty()) {
+            return false;
+        }
+        String upper = enc.toUpperCase();
+        return upper.contains("EBCDIC") || 
+               upper.contains("IBM-10") || upper.contains("IBM10") ||
+               upper.contains("IBM-03") || upper.contains("IBM03") ||
+               upper.contains("IBM-5") || upper.contains("IBM5") ||
+               upper.startsWith("CP037") || upper.equals("CP037") ||
+               upper.startsWith("CP500") || upper.equals("CP500") ||
+               upper.startsWith("CP1047") || upper.equals("CP1047") ||
+               upper.startsWith("CP1148") || upper.equals("CP1148");
     }
     
     /**

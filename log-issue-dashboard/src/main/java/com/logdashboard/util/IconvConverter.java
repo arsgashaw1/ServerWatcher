@@ -14,14 +14,13 @@ import java.util.concurrent.TimeUnit;
  * system's iconv may provide better compatibility than Java's built-in charset handling.
  * 
  * Common conversions:
- * - IBM-1047 (EBCDIC Unix/z/OS) -> UTF-8
- * - ISO8859-1 -> IBM-1047 (for writing EBCDIC)
- * - Cp037 (EBCDIC US/Canada) -> UTF-8
+ * - IBM-1047 (EBCDIC Unix/z/OS) -> ISO8859-1 (for readable output)
+ * - Cp037 (EBCDIC US/Canada) -> ISO8859-1
  * 
  * Usage:
  * <pre>
- *   IconvConverter.convertFileToUtf8(path, "IBM-1047");
- *   String text = IconvConverter.convertToUtf8(bytes, "IBM-1047");
+ *   IconvConverter.convertEbcdicToReadable(bytes, "IBM-1047");
+ *   String text = IconvConverter.convertToIso8859(bytes, "IBM-1047");
  * </pre>
  */
 public class IconvConverter {
@@ -49,6 +48,15 @@ public class IconvConverter {
                 ProcessBuilder pb = new ProcessBuilder("iconv", "--version");
                 pb.redirectErrorStream(true);
                 Process process = pb.start();
+                
+                // Consume output to prevent blocking
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(process.getInputStream()))) {
+                    while (reader.readLine() != null) {
+                        // Consume output
+                    }
+                }
+                
                 boolean completed = process.waitFor(5, TimeUnit.SECONDS);
                 iconvAvailable = completed && process.exitValue() == 0;
             } catch (Exception e) {
@@ -56,6 +64,13 @@ public class IconvConverter {
             }
         }
         return iconvAvailable;
+    }
+    
+    /**
+     * Resets the iconv availability cache (for testing).
+     */
+    public static synchronized void resetIconvCache() {
+        iconvAvailable = null;
     }
     
     /**
@@ -101,6 +116,142 @@ public class IconvConverter {
         );
         
         return executeIconvProcessWithInput(pb, data);
+    }
+    
+    /**
+     * Converts bytes from a source encoding to ISO8859-1 using iconv.
+     * This is the preferred conversion for EBCDIC mainframe files.
+     * Command: iconv -f IBM-1047 -t ISO8859-1
+     * 
+     * @param data The bytes to convert
+     * @param fromEncoding Source encoding (e.g., "IBM-1047")
+     * @return The converted content as an ISO8859-1 string
+     * @throws IOException if conversion fails
+     */
+    public static String convertToIso8859(byte[] data, String fromEncoding) throws IOException {
+        if (!isIconvAvailable()) {
+            return convertToIso8859Fallback(data, fromEncoding);
+        }
+        
+        ProcessBuilder pb = new ProcessBuilder(
+            "iconv",
+            "-f", fromEncoding,
+            "-t", ICONV_ISO8859_1
+        );
+        
+        return executeIconvProcessWithInput(pb, data, StandardCharsets.ISO_8859_1);
+    }
+    
+    /**
+     * Converts EBCDIC bytes to readable text.
+     * Uses: iconv -f [ebcdicEncoding] -t ISO8859-1
+     * This is the correct conversion for IBM mainframe EBCDIC files.
+     * 
+     * @param data The EBCDIC bytes to convert
+     * @param ebcdicEncoding Source EBCDIC encoding (e.g., "IBM-1047", "IBM-037")
+     * @return The converted content as a readable string
+     * @throws IOException if conversion fails
+     */
+    public static String convertEbcdicToReadable(byte[] data, String ebcdicEncoding) throws IOException {
+        // Normalize encoding name to iconv format
+        String iconvEncoding = normalizeToIconvEncoding(ebcdicEncoding);
+        return convertToIso8859(data, iconvEncoding);
+    }
+    
+    /**
+     * Normalizes encoding name to iconv-compatible format.
+     */
+    public static String normalizeToIconvEncoding(String encoding) {
+        if (encoding == null || encoding.isEmpty()) {
+            return ICONV_UTF8;
+        }
+        
+        String upper = encoding.toUpperCase().replace("_", "-").trim();
+        
+        // Already in iconv format
+        if (upper.startsWith("IBM-")) {
+            return upper;
+        }
+        
+        // Map common names to iconv format
+        switch (upper) {
+            case "EBCDIC":
+            case "EBCDIC-1047":
+            case "EBCDIC-UNIX":
+            case "CP1047":
+            case "IBM1047":
+                return ICONV_EBCDIC_1047;
+            case "EBCDIC-037":
+            case "EBCDIC-US":
+            case "CP037":
+            case "IBM037":
+                return ICONV_EBCDIC_037;
+            case "EBCDIC-500":
+            case "EBCDIC-INTL":
+            case "CP500":
+            case "IBM500":
+                return ICONV_EBCDIC_500;
+            case "EBCDIC-1148":
+            case "CP1148":
+            case "IBM1148":
+                return ICONV_EBCDIC_1148;
+            case "ISO8859-1":
+            case "ISO-8859-1":
+            case "LATIN1":
+            case "LATIN-1":
+                return ICONV_ISO8859_1;
+            case "UTF-8":
+            case "UTF8":
+                return ICONV_UTF8;
+            default:
+                // Try to convert CpXXXX to IBM-XXXX
+                if (upper.startsWith("CP")) {
+                    return "IBM-" + upper.substring(2);
+                }
+                return encoding;
+        }
+    }
+    
+    /**
+     * Checks if the encoding is an EBCDIC/IBM mainframe encoding.
+     */
+    public static boolean isEbcdicEncoding(String encoding) {
+        if (encoding == null || encoding.isEmpty()) {
+            return false;
+        }
+        String upper = encoding.toUpperCase();
+        return upper.contains("EBCDIC") || 
+               upper.contains("IBM-10") || upper.contains("IBM10") ||
+               upper.contains("IBM-03") || upper.contains("IBM03") ||
+               upper.contains("IBM-5") || upper.contains("IBM5") ||
+               upper.startsWith("CP037") || upper.equals("CP037") ||
+               upper.startsWith("CP500") || upper.equals("CP500") ||
+               upper.startsWith("CP1047") || upper.equals("CP1047") ||
+               upper.startsWith("CP1148") || upper.equals("CP1148");
+    }
+    
+    /**
+     * Converts a file from a source encoding to ISO8859-1 using iconv.
+     * This is the preferred conversion for EBCDIC mainframe files.
+     * 
+     * @param inputPath Path to the input file
+     * @param fromEncoding Source encoding (e.g., "IBM-1047")
+     * @return The converted content as an ISO8859-1 string
+     * @throws IOException if conversion fails
+     */
+    public static String convertFileToIso8859(Path inputPath, String fromEncoding) throws IOException {
+        if (!isIconvAvailable()) {
+            return convertFileToIso8859Fallback(inputPath, fromEncoding);
+        }
+        
+        ProcessBuilder pb = new ProcessBuilder(
+            "iconv",
+            "-f", fromEncoding,
+            "-t", ICONV_ISO8859_1,
+            inputPath.toString()
+        );
+        
+        return executeIconvProcess(pb, StandardCharsets.ISO_8859_1);
     }
     
     /**
@@ -280,11 +431,15 @@ public class IconvConverter {
     // === Private helper methods ===
     
     private static String executeIconvProcess(ProcessBuilder pb) throws IOException {
+        return executeIconvProcess(pb, StandardCharsets.UTF_8);
+    }
+    
+    private static String executeIconvProcess(ProcessBuilder pb, Charset outputCharset) throws IOException {
         pb.redirectErrorStream(true);
         Process process = pb.start();
         
         try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                new InputStreamReader(process.getInputStream(), outputCharset))) {
             StringBuilder output = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
@@ -312,6 +467,10 @@ public class IconvConverter {
     }
     
     private static String executeIconvProcessWithInput(ProcessBuilder pb, byte[] input) throws IOException {
+        return executeIconvProcessWithInput(pb, input, StandardCharsets.UTF_8);
+    }
+    
+    private static String executeIconvProcessWithInput(ProcessBuilder pb, byte[] input, Charset outputCharset) throws IOException {
         pb.redirectErrorStream(true);
         Process process = pb.start();
         
@@ -323,7 +482,7 @@ public class IconvConverter {
         
         // Read output
         try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                new InputStreamReader(process.getInputStream(), outputCharset))) {
             StringBuilder output = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
@@ -396,6 +555,19 @@ public class IconvConverter {
     private static String convertToUtf8Fallback(byte[] data, String fromEncoding) {
         Charset charset = iconvEncodingToJavaCharset(fromEncoding);
         return new String(data, charset);
+    }
+    
+    private static String convertToIso8859Fallback(byte[] data, String fromEncoding) {
+        // First decode from source encoding, then the string is in Java's internal UTF-16
+        // When we return it as ISO-8859-1 string, the caller should handle it correctly
+        Charset charset = iconvEncodingToJavaCharset(fromEncoding);
+        String text = new String(data, charset);
+        return text;
+    }
+    
+    private static String convertFileToIso8859Fallback(Path inputPath, String fromEncoding) throws IOException {
+        Charset charset = iconvEncodingToJavaCharset(fromEncoding);
+        return new String(Files.readAllBytes(inputPath), charset);
     }
     
     private static byte[] convertUtf8ToEbcdicFallback(String text, String toEncoding) {
