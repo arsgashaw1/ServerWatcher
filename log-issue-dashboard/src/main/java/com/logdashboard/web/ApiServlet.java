@@ -6,7 +6,7 @@ import com.logdashboard.analysis.AnalysisService;
 import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.config.ServerPath;
 import com.logdashboard.model.LogIssue;
-import com.logdashboard.store.IssueStore;
+import com.logdashboard.store.IssueRepository;
 import com.logdashboard.util.EncodingDetector;
 
 import jakarta.servlet.ServletException;
@@ -37,12 +37,12 @@ public class ApiServlet extends HttpServlet {
             .setDateFormat("yyyy-MM-dd'T'HH:mm:ss")
             .create();
     
-    private final IssueStore issueStore;
+    private final IssueRepository issueStore;
     private final AnalysisService analysisService;
     private final DashboardConfig config;
     private EventStreamServlet eventStreamServlet;
     
-    public ApiServlet(IssueStore issueStore, AnalysisService analysisService, DashboardConfig config) {
+    public ApiServlet(IssueRepository issueStore, AnalysisService analysisService, DashboardConfig config) {
         this.issueStore = issueStore;
         this.analysisService = analysisService;
         this.config = config;

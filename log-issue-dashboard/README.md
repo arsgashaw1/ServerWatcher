@@ -20,6 +20,13 @@ A modern web-based dashboard for real-time log file monitoring with advanced ana
 - **Real-time Charts**: Visualize issue trends, severity distribution, and server breakdown
 - **Issue Details Modal**: Click any issue to see full stack trace and details
 
+### Persistent Storage (H2 Database)
+- **Data Persistence**: Issues survive application restarts with H2 file-based database
+- **Indexed Queries**: Fast lookups and filtering via database indexes
+- **Higher Capacity**: Support for up to 100,000 issues (vs 50,000 in-memory)
+- **Automatic Migration**: Schema versioning for future upgrades
+- **Optional In-Memory Mode**: Fall back to in-memory storage if needed
+
 ### Analysis & Insights
 - **Trend Analysis**: Track issue rate over time (minute-by-minute and hourly views)
 - **Severity Distribution**: See breakdown of Critical, Exception, Error, and Warning issues
@@ -89,7 +96,9 @@ java -jar build/libs/log-issue-dashboard-1.0.0-all.jar --create-config ./config
   "filePatterns": ["*.log", "*.txt", "*.out"],
   "pollingIntervalSeconds": 2,
   "maxIssuesDisplayed": 500,
-  "webServerPort": 8080
+  "webServerPort": 8080,
+  "storageType": "h2",
+  "databasePath": "data/log-dashboard"
 }
 ```
 
@@ -181,9 +190,49 @@ java -jar log-issue-dashboard.jar ./config 9090
 | `exceptionPatterns` | array | (see above) | Regex patterns to detect exceptions |
 | `errorPatterns` | array | (see above) | Regex patterns to detect errors |
 | `warningPatterns` | array | (see above) | Regex patterns to detect warnings |
+| `exclusionPatterns` | array | (see above) | Regex patterns to exclude (false positives) |
 | `pollingIntervalSeconds` | int | `2` | How often to check for file changes |
-| `maxIssuesDisplayed` | int | `500` | Maximum issues to keep in memory |
+| `maxIssuesDisplayed` | int | `500` | Maximum issues to keep in store |
 | `webServerPort` | int | `8080` | HTTP server port |
+| `storageType` | string | `"h2"` | Storage backend: `"h2"` (persistent) or `"memory"` |
+| `databasePath` | string | `"data/log-dashboard"` | Path to H2 database file (without extension) |
+
+### Storage Configuration
+
+The dashboard supports two storage backends:
+
+| Storage Type | Description | Persistence | Capacity |
+|-------------|-------------|-------------|----------|
+| `h2` (default) | H2 file-based database | ✅ Survives restarts | Up to 100,000 issues |
+| `memory` | In-memory storage | ❌ Lost on restart | Up to 50,000 issues |
+
+**H2 Storage Benefits:**
+- Issues are persisted to disk and survive application restarts
+- Indexed queries for fast filtering by severity, server, and date range
+- SQL-powered aggregations for statistics
+- Automatic schema migrations for future updates
+
+**Example - Using H2 Storage (default):**
+```json
+{
+  "storageType": "h2",
+  "databasePath": "data/log-dashboard",
+  "maxIssuesDisplayed": 10000
+}
+```
+
+**Example - Using In-Memory Storage:**
+```json
+{
+  "storageType": "memory",
+  "maxIssuesDisplayed": 500
+}
+```
+
+**Database Location:**
+- Default: `./data/log-dashboard.mv.db`
+- The database file will be created automatically on first startup
+- Database path is relative to the working directory (or can be absolute)
 
 ### Server Configuration Options
 
@@ -194,6 +243,43 @@ java -jar log-issue-dashboard.jar ./config 9090
 | `description` | string | `null` | Optional description |
 | `encoding` | string | `UTF-8` | Character encoding for log files |
 | `useIconv` | boolean | `false` | Use external `iconv` command for encoding conversion |
+
+### Exclusion Patterns (False Positive Filtering)
+
+Exclusion patterns allow you to filter out false positives - log lines that match error/warning patterns but are actually success messages or harmless.
+
+**Common False Positives:**
+- Success summaries containing "Failed: 0"
+- Status messages with zero error counts
+- Informational messages containing error-related keywords
+
+**Example Configuration:**
+```json
+{
+  "exclusionPatterns": [
+    ".*extractMDB Success:.*Failed: 0.*",
+    ".*Success:.*Failed: 0.*Skipped: 0.*",
+    ".*\\bFailed: 0\\b.*\\bSkipped: 0\\b.*",
+    ".*completed successfully.*",
+    ".*0 errors.*0 warnings.*",
+    ".*Build succeeded.*"
+  ]
+}
+```
+
+**How It Works:**
+1. Each log line is first checked against exclusion patterns
+2. If any exclusion pattern matches, the line is skipped entirely
+3. Only non-excluded lines are checked against error/warning patterns
+
+**Pattern Examples:**
+
+| Pattern | Matches | Purpose |
+|---------|---------|---------|
+| `.*Failed: 0.*` | "extractMDB Success: 13 - Failed: 0 Skipped: 0" | Ignore success summaries |
+| `.*\\b0 errors\\b.*` | "Compilation completed: 0 errors, 0 warnings" | Ignore clean builds |
+| `.*successfully.*` | "Operation completed successfully" | Ignore success messages |
+| `.*\\[INFO\\].*ERROR.*` | "[INFO] No ERROR found" | Ignore info about errors |
 
 ### EBCDIC and Character Encoding Support
 
@@ -487,7 +573,10 @@ src/main/java/com/logdashboard/
 ├── parser/
 │   └── LogParser.java         # Log line parsing
 ├── store/
-│   └── IssueStore.java        # Thread-safe issue storage
+│   ├── IssueRepository.java   # Storage interface
+│   ├── IssueStore.java        # In-memory storage implementation
+│   ├── H2IssueStore.java      # H2 database storage implementation
+│   └── DatabaseManager.java   # H2 connection and schema management
 ├── watcher/
 │   ├── ConfigFileWatcher.java # Hot config reload
 │   └── LogFileWatcher.java    # File change detection

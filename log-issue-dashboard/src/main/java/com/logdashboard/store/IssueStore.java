@@ -13,17 +13,20 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 /**
- * Thread-safe store for log issues that supports web access.
+ * Thread-safe in-memory store for log issues that supports web access.
  * Provides statistics and filtering capabilities for the dashboard.
  * 
  * Memory optimization: enforces maximum issue limit and provides
  * efficient access patterns to minimize GC pressure.
+ * 
+ * Note: Data is lost when the application restarts. For persistent storage,
+ * use H2IssueStore instead.
  */
-public class IssueStore {
+public class IssueStore implements IssueRepository {
     
     private final Deque<LogIssue> issues;
     private final int maxIssues;
-    private final List<IssueListener> listeners;
+    private final List<IssueRepository.IssueListener> listeners;
     private final AtomicLong totalIssuesCount;
     private final Map<Severity, AtomicLong> severityCounts;
     private final Map<String, AtomicLong> serverCounts;
@@ -31,10 +34,6 @@ public class IssueStore {
     // Maximum limits to prevent memory exhaustion
     private static final int MAX_LISTENERS = 100;
     private static final int MAX_FILTER_RESULTS = 10000;
-    
-    public interface IssueListener {
-        void onNewIssue(LogIssue issue);
-    }
     
     public IssueStore(int maxIssues) {
         // Enforce a reasonable maximum to prevent memory exhaustion
@@ -53,6 +52,7 @@ public class IssueStore {
     /**
      * Adds a new issue to the store.
      */
+    @Override
     public void addIssue(LogIssue issue) {
         issues.addFirst(issue);
         totalIssuesCount.incrementAndGet();
@@ -72,7 +72,7 @@ public class IssueStore {
         }
         
         // Notify listeners
-        for (IssueListener listener : listeners) {
+        for (IssueRepository.IssueListener listener : listeners) {
             try {
                 listener.onNewIssue(issue);
             } catch (Exception e) {
@@ -85,7 +85,8 @@ public class IssueStore {
      * Adds a listener for new issues (for WebSocket or SSE).
      * Returns false if max listeners limit reached.
      */
-    public boolean addListener(IssueListener listener) {
+    @Override
+    public boolean addListener(IssueRepository.IssueListener listener) {
         if (listeners.size() >= MAX_LISTENERS) {
             System.err.println("Warning: Max listeners limit (" + MAX_LISTENERS + ") reached, rejecting new listener");
             return false;
@@ -97,13 +98,15 @@ public class IssueStore {
     /**
      * Removes a listener.
      */
-    public void removeListener(IssueListener listener) {
+    @Override
+    public void removeListener(IssueRepository.IssueListener listener) {
         listeners.remove(listener);
     }
     
     /**
      * Gets all issues (most recent first).
      */
+    @Override
     public List<LogIssue> getAllIssues() {
         return new ArrayList<>(issues);
     }
@@ -111,6 +114,7 @@ public class IssueStore {
     /**
      * Gets issues with pagination.
      */
+    @Override
     public List<LogIssue> getIssues(int offset, int limit) {
         return issues.stream()
                 .skip(offset)
@@ -121,6 +125,7 @@ public class IssueStore {
     /**
      * Gets issues filtered by severity.
      */
+    @Override
     public List<LogIssue> getIssuesBySeverity(Severity severity) {
         return issues.stream()
                 .filter(i -> i.getSeverity() == severity)
@@ -130,6 +135,7 @@ public class IssueStore {
     /**
      * Gets issues filtered by server.
      */
+    @Override
     public List<LogIssue> getIssuesByServer(String serverName) {
         return issues.stream()
                 .filter(i -> serverName.equals(i.getServerName()))
@@ -139,6 +145,7 @@ public class IssueStore {
     /**
      * Gets issues from the last N minutes.
      */
+    @Override
     public List<LogIssue> getRecentIssues(int minutes) {
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(minutes);
         return issues.stream()
@@ -149,6 +156,7 @@ public class IssueStore {
     /**
      * Gets issues within a date range.
      */
+    @Override
     public List<LogIssue> getIssuesByDateRange(LocalDateTime from, LocalDateTime to) {
         return issues.stream()
                 .filter(i -> {
@@ -162,6 +170,7 @@ public class IssueStore {
      * Gets issues with combined filters (severity, server, date range).
      * Enforces maximum result limit to prevent memory exhaustion.
      */
+    @Override
     public List<LogIssue> getFilteredIssues(Severity severity, String serverName, 
                                              LocalDateTime from, LocalDateTime to,
                                              int offset, int limit) {
@@ -184,6 +193,7 @@ public class IssueStore {
     /**
      * Gets total count of filtered issues.
      */
+    @Override
     public long getFilteredIssuesCount(Severity severity, String serverName, 
                                         LocalDateTime from, LocalDateTime to) {
         return issues.stream()
@@ -199,6 +209,7 @@ public class IssueStore {
     /**
      * Gets the earliest issue timestamp.
      */
+    @Override
     public Optional<LocalDateTime> getEarliestIssueTime() {
         return issues.stream()
                 .map(LogIssue::getDetectedAt)
@@ -208,6 +219,7 @@ public class IssueStore {
     /**
      * Gets the latest issue timestamp.
      */
+    @Override
     public Optional<LocalDateTime> getLatestIssueTime() {
         return issues.stream()
                 .map(LogIssue::getDetectedAt)
@@ -217,6 +229,7 @@ public class IssueStore {
     /**
      * Gets issues grouped by date for trending.
      */
+    @Override
     public Map<String, Integer> getDailyTrend(int days) {
         LocalDateTime now = LocalDateTime.now();
         Map<String, Integer> trend = new LinkedHashMap<>();
@@ -247,6 +260,7 @@ public class IssueStore {
     /**
      * Gets an issue by ID.
      */
+    @Override
     public Optional<LogIssue> getIssueById(String id) {
         return issues.stream()
                 .filter(i -> i.getId().equals(id))
@@ -256,6 +270,7 @@ public class IssueStore {
     /**
      * Acknowledges an issue.
      */
+    @Override
     public boolean acknowledgeIssue(String id) {
         Optional<LogIssue> issue = getIssueById(id);
         if (issue.isPresent()) {
@@ -268,6 +283,7 @@ public class IssueStore {
     /**
      * Clears all issues.
      */
+    @Override
     public void clearAll() {
         issues.clear();
     }
@@ -275,6 +291,7 @@ public class IssueStore {
     /**
      * Clears acknowledged issues.
      */
+    @Override
     public void clearAcknowledged() {
         issues.removeIf(LogIssue::isAcknowledged);
     }
@@ -282,6 +299,7 @@ public class IssueStore {
     /**
      * Gets the total count of issues ever received.
      */
+    @Override
     public long getTotalIssuesCount() {
         return totalIssuesCount.get();
     }
@@ -289,6 +307,7 @@ public class IssueStore {
     /**
      * Gets the current number of issues in the store.
      */
+    @Override
     public int getCurrentIssuesCount() {
         return issues.size();
     }
@@ -296,6 +315,7 @@ public class IssueStore {
     /**
      * Gets count by severity.
      */
+    @Override
     public long getCountBySeverity(Severity severity) {
         AtomicLong count = severityCounts.get(severity);
         return count != null ? count.get() : 0;
@@ -304,6 +324,7 @@ public class IssueStore {
     /**
      * Gets counts by server.
      */
+    @Override
     public Map<String, Long> getServerCounts() {
         Map<String, Long> result = new HashMap<>();
         for (Map.Entry<String, AtomicLong> entry : serverCounts.entrySet()) {
@@ -315,6 +336,7 @@ public class IssueStore {
     /**
      * Gets severity distribution for current issues.
      */
+    @Override
     public Map<String, Integer> getCurrentSeverityDistribution() {
         Map<String, Integer> distribution = new LinkedHashMap<>();
         for (Severity s : Severity.values()) {
@@ -330,6 +352,7 @@ public class IssueStore {
     /**
      * Gets issues grouped by hour for trending.
      */
+    @Override
     public Map<String, Integer> getHourlyTrend(int hours) {
         LocalDateTime now = LocalDateTime.now();
         Map<String, Integer> trend = new LinkedHashMap<>();
@@ -356,6 +379,7 @@ public class IssueStore {
     /**
      * Gets unique server names from current issues.
      */
+    @Override
     public Set<String> getActiveServers() {
         return issues.stream()
                 .map(LogIssue::getServerName)
@@ -366,6 +390,7 @@ public class IssueStore {
     /**
      * Gets unique exception types from current issues.
      */
+    @Override
     public Map<String, Integer> getExceptionTypeDistribution() {
         Map<String, Integer> distribution = new HashMap<>();
         for (LogIssue issue : issues) {

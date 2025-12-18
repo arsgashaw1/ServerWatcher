@@ -3,7 +3,7 @@ package com.logdashboard.web;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.logdashboard.model.LogIssue;
-import com.logdashboard.store.IssueStore;
+import com.logdashboard.store.IssueRepository;
 
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.ServletException;
@@ -40,13 +40,13 @@ public class EventStreamServlet extends HttpServlet {
     // Maximum concurrent SSE connections to prevent memory exhaustion
     private static final int MAX_SSE_CLIENTS = 100;
     
-    private final IssueStore issueStore;
+    private final IssueRepository issueStore;
     private final CopyOnWriteArrayList<AsyncContext> clients;
     
     // Track viewer information: maps AsyncContext to ViewerInfo
     private final ConcurrentHashMap<AsyncContext, ViewerInfo> viewerInfoMap;
     
-    public EventStreamServlet(IssueStore issueStore) {
+    public EventStreamServlet(IssueRepository issueStore) {
         this.issueStore = issueStore;
         this.clients = new CopyOnWriteArrayList<>();
         this.viewerInfoMap = new ConcurrentHashMap<>();

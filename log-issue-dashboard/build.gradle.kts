@@ -26,6 +26,9 @@ dependencies {
     
     // Jakarta Servlet API (required for Tomcat 10+)
     implementation("jakarta.servlet:jakarta.servlet-api:6.0.0")
+    
+    // H2 embedded database for persistent storage
+    implementation("com.h2database:h2:2.2.224")
 }
 
 application {

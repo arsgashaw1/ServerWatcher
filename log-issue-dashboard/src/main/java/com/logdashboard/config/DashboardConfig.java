@@ -15,11 +15,16 @@ public class DashboardConfig {
     private List<String> exceptionPatterns;
     private List<String> errorPatterns;
     private List<String> warningPatterns;
+    private List<String> exclusionPatterns;  // Patterns to exclude (false positives)
     private int pollingIntervalSeconds;
     private int maxIssuesDisplayed;
     private boolean enableSound;
     private String windowTitle;
     private int webServerPort;
+    
+    // Database configuration
+    private String storageType; // "memory" or "h2"
+    private String databasePath; // Path to H2 database file (without .mv.db extension)
     
     public DashboardConfig() {
         // Default configuration
@@ -43,11 +48,18 @@ public class DashboardConfig {
             ".*\\bWARN\\b.*",
             ".*\\bWARNING\\b.*"
         );
+        // Default exclusion patterns for common false positives
+        this.exclusionPatterns = Arrays.asList(
+            ".*Success:.*Failed: 0.*",  // Success messages with zero failures
+            ".*\\bFailed: 0\\b.*\\bSkipped: 0\\b.*"  // Summary lines with zero failures
+        );
         this.pollingIntervalSeconds = 2;
         this.maxIssuesDisplayed = 500;
         this.enableSound = false;
         this.windowTitle = "Log Issue Dashboard";
         this.webServerPort = 8080;
+        this.storageType = "h2"; // Default to H2 for persistence
+        this.databasePath = "data/log-dashboard"; // Default database path
     }
 
     public List<String> getWatchPaths() {
@@ -98,6 +110,14 @@ public class DashboardConfig {
         this.warningPatterns = warningPatterns;
     }
 
+    public List<String> getExclusionPatterns() {
+        return exclusionPatterns;
+    }
+
+    public void setExclusionPatterns(List<String> exclusionPatterns) {
+        this.exclusionPatterns = exclusionPatterns;
+    }
+
     public int getPollingIntervalSeconds() {
         return pollingIntervalSeconds;
     }
@@ -136,6 +156,29 @@ public class DashboardConfig {
 
     public void setWebServerPort(int webServerPort) {
         this.webServerPort = webServerPort;
+    }
+
+    public String getStorageType() {
+        return storageType;
+    }
+
+    public void setStorageType(String storageType) {
+        this.storageType = storageType;
+    }
+
+    public String getDatabasePath() {
+        return databasePath;
+    }
+
+    public void setDatabasePath(String databasePath) {
+        this.databasePath = databasePath;
+    }
+    
+    /**
+     * Returns true if H2 database storage should be used.
+     */
+    public boolean useH2Storage() {
+        return "h2".equalsIgnoreCase(storageType);
     }
 
     @Override
