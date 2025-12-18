@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -39,8 +40,8 @@ public class H2IssueStore implements IssueRepository {
         this.maxIssues = Math.min(maxIssues, 100000); // Higher limit since we use disk
         this.listeners = new CopyOnWriteArrayList<>();
         this.totalIssuesCount = new AtomicLong(0);
-        this.severityCounts = new HashMap<>();
-        this.serverCounts = new HashMap<>();
+        this.severityCounts = new ConcurrentHashMap<>();
+        this.serverCounts = new ConcurrentHashMap<>();
         
         for (Severity s : Severity.values()) {
             severityCounts.put(s, new AtomicLong(0));
@@ -157,6 +158,7 @@ public class H2IssueStore implements IssueRepository {
     
     /**
      * Trims old issues when max limit is exceeded.
+     * Also refreshes cached counters to stay in sync with database.
      */
     private void trimOldIssues(Connection conn) throws SQLException {
         int currentCount = getCurrentIssuesCount();
@@ -166,8 +168,53 @@ public class H2IssueStore implements IssueRepository {
                     "DELETE FROM log_issues WHERE id IN " +
                     "(SELECT id FROM log_issues ORDER BY detected_at ASC LIMIT ?)")) {
                 stmt.setInt(1, toDelete);
-                stmt.executeUpdate();
+                int deleted = stmt.executeUpdate();
+                if (deleted > 0) {
+                    // Refresh cached counters from database to stay in sync
+                    refreshCachedCounters();
+                }
             }
+        }
+    }
+    
+    /**
+     * Refreshes cached severity and server counts from the database.
+     * Called after trimming or clearing issues to keep caches in sync.
+     */
+    private void refreshCachedCounters() {
+        try {
+            Connection conn = dbManager.getConnection();
+            
+            // Reset and reload severity counts
+            for (Severity s : Severity.values()) {
+                severityCounts.get(s).set(0);
+            }
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT severity, COUNT(*) FROM log_issues GROUP BY severity")) {
+                ResultSet rs = stmt.executeQuery();
+                while (rs.next()) {
+                    String sevStr = rs.getString(1);
+                    try {
+                        Severity sev = Severity.valueOf(sevStr);
+                        severityCounts.get(sev).set(rs.getLong(2));
+                    } catch (IllegalArgumentException e) {
+                        // Ignore unknown severity
+                    }
+                }
+            }
+            
+            // Reset and reload server counts
+            serverCounts.clear();
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT server_name, COUNT(*) FROM log_issues WHERE server_name IS NOT NULL GROUP BY server_name")) {
+                ResultSet rs = stmt.executeQuery();
+                while (rs.next()) {
+                    String serverName = rs.getString(1);
+                    serverCounts.put(serverName, new AtomicLong(rs.getLong(2)));
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error refreshing cached counters: " + e.getMessage());
         }
     }
     
@@ -641,12 +688,26 @@ public class H2IssueStore implements IssueRepository {
     
     /**
      * Gets counts by server.
+     * Queries database directly for accurate counts.
      */
     @Override
     public Map<String, Long> getServerCounts() {
         Map<String, Long> result = new HashMap<>();
-        for (Map.Entry<String, AtomicLong> entry : serverCounts.entrySet()) {
-            result.put(entry.getKey(), entry.getValue().get());
+        try {
+            Connection conn = dbManager.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT server_name, COUNT(*) FROM log_issues WHERE server_name IS NOT NULL GROUP BY server_name")) {
+                ResultSet rs = stmt.executeQuery();
+                while (rs.next()) {
+                    result.put(rs.getString(1), rs.getLong(2));
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting server counts: " + e.getMessage());
+            // Fall back to cached values if database query fails
+            for (Map.Entry<String, AtomicLong> entry : serverCounts.entrySet()) {
+                result.put(entry.getKey(), entry.getValue().get());
+            }
         }
         return result;
     }

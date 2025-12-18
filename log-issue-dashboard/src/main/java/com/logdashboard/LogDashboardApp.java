@@ -139,6 +139,11 @@ public class LogDashboardApp {
             } catch (SQLException e) {
                 System.err.println("Failed to initialize H2 database: " + e.getMessage());
                 System.err.println("Falling back to in-memory storage.");
+                // Close the database manager to prevent connection leak
+                if (databaseManager != null) {
+                    databaseManager.close();
+                    databaseManager = null;
+                }
                 issueStore = new IssueStore(config.getMaxIssuesDisplayed());
             }
         } else {
@@ -175,9 +180,10 @@ public class LogDashboardApp {
             logWatcher.stop();
             configWatcher.stop();
             webServer.stop();
-            // Close H2 database connection if using H2 storage
-            if (issueStore instanceof H2IssueStore) {
-                ((H2IssueStore) issueStore).close();
+            // Close H2 database connection if it exists
+            // This handles both normal H2 usage and any edge cases
+            if (databaseManager != null) {
+                databaseManager.close();
             }
             System.out.println("Goodbye!");
         }));
