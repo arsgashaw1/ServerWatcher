@@ -64,6 +64,24 @@ public class LogIssue {
                     String fullStackTrace, Severity severity) {
         this(null, fileName, lineNumber, issueType, message, fullStackTrace, severity);
     }
+    
+    /**
+     * Constructor for restoring from database with original timestamp and ID.
+     */
+    public LogIssue(String serverName, String fileName, int lineNumber, String issueType,
+                    String message, String fullStackTrace, Severity severity,
+                    LocalDateTime detectedAt, String id) {
+        this.id = id;
+        this.serverName = serverName;
+        this.fileName = fileName;
+        this.lineNumber = lineNumber;
+        this.issueType = issueType;
+        this.message = message;
+        this.fullStackTrace = fullStackTrace;
+        this.detectedAt = detectedAt;
+        this.severity = severity;
+        this.acknowledged = false;
+    }
 
     private String generateId() {
         return String.valueOf(System.nanoTime());

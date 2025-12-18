@@ -21,6 +21,10 @@ public class DashboardConfig {
     private String windowTitle;
     private int webServerPort;
     
+    // Database configuration
+    private String storageType; // "memory" or "h2"
+    private String databasePath; // Path to H2 database file (without .mv.db extension)
+    
     public DashboardConfig() {
         // Default configuration
         this.watchPaths = new ArrayList<>();
@@ -48,6 +52,8 @@ public class DashboardConfig {
         this.enableSound = false;
         this.windowTitle = "Log Issue Dashboard";
         this.webServerPort = 8080;
+        this.storageType = "h2"; // Default to H2 for persistence
+        this.databasePath = "data/log-dashboard"; // Default database path
     }
 
     public List<String> getWatchPaths() {
@@ -136,6 +142,29 @@ public class DashboardConfig {
 
     public void setWebServerPort(int webServerPort) {
         this.webServerPort = webServerPort;
+    }
+
+    public String getStorageType() {
+        return storageType;
+    }
+
+    public void setStorageType(String storageType) {
+        this.storageType = storageType;
+    }
+
+    public String getDatabasePath() {
+        return databasePath;
+    }
+
+    public void setDatabasePath(String databasePath) {
+        this.databasePath = databasePath;
+    }
+    
+    /**
+     * Returns true if H2 database storage should be used.
+     */
+    public boolean useH2Storage() {
+        return "h2".equalsIgnoreCase(storageType);
     }
 
     @Override

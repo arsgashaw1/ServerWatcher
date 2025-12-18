@@ -2,7 +2,7 @@ package com.logdashboard.web;
 
 import com.logdashboard.analysis.AnalysisService;
 import com.logdashboard.config.DashboardConfig;
-import com.logdashboard.store.IssueStore;
+import com.logdashboard.store.IssueRepository;
 
 import org.apache.catalina.Context;
 import org.apache.catalina.LifecycleException;
@@ -18,12 +18,12 @@ public class WebServer {
     
     private final Tomcat tomcat;
     private final int port;
-    private final IssueStore issueStore;
+    private final IssueRepository issueStore;
     private final AnalysisService analysisService;
     private final DashboardConfig config;
     private EventStreamServlet eventStreamServlet;
     
-    public WebServer(int port, IssueStore issueStore, AnalysisService analysisService, DashboardConfig config) {
+    public WebServer(int port, IssueRepository issueStore, AnalysisService analysisService, DashboardConfig config) {
         this.port = port;
         this.issueStore = issueStore;
         this.analysisService = analysisService;

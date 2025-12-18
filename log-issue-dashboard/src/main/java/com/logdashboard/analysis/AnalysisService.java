@@ -2,7 +2,7 @@ package com.logdashboard.analysis;
 
 import com.logdashboard.model.LogIssue;
 import com.logdashboard.model.LogIssue.Severity;
-import com.logdashboard.store.IssueStore;
+import com.logdashboard.store.IssueRepository;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -19,7 +19,7 @@ import java.util.stream.Collectors;
  */
 public class AnalysisService {
     
-    private final IssueStore issueStore;
+    private final IssueRepository issueStore;
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm");
     
@@ -63,7 +63,7 @@ public class AnalysisService {
         }
     }
     
-    public AnalysisService(IssueStore issueStore) {
+    public AnalysisService(IssueRepository issueStore) {
         this.issueStore = issueStore;
     }
     

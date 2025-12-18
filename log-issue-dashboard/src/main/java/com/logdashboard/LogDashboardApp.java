@@ -3,12 +3,16 @@ package com.logdashboard;
 import com.logdashboard.analysis.AnalysisService;
 import com.logdashboard.config.ConfigLoader;
 import com.logdashboard.config.DashboardConfig;
+import com.logdashboard.store.DatabaseManager;
+import com.logdashboard.store.H2IssueStore;
+import com.logdashboard.store.IssueRepository;
 import com.logdashboard.store.IssueStore;
 import com.logdashboard.watcher.ConfigFileWatcher;
 import com.logdashboard.watcher.LogFileWatcher;
 import com.logdashboard.web.WebServer;
 
 import java.io.IOException;
+import java.sql.SQLException;
 
 /**
  * Main entry point for the Log Issue Dashboard application.
@@ -26,7 +30,8 @@ public class LogDashboardApp {
     private static final int DEFAULT_PORT = 8080;
     
     private static ConfigLoader configLoader;
-    private static IssueStore issueStore;
+    private static IssueRepository issueStore;
+    private static DatabaseManager databaseManager;
     private static AnalysisService analysisService;
     private static WebServer webServer;
     private static LogFileWatcher logWatcher;
@@ -123,8 +128,23 @@ public class LogDashboardApp {
     }
     
     private static void startApplication(DashboardConfig config, int port) throws Exception {
-        // Create the issue store
-        issueStore = new IssueStore(config.getMaxIssuesDisplayed());
+        // Create the issue store (H2 file-based or in-memory)
+        if (config.useH2Storage()) {
+            System.out.println("Storage: H2 file-based database");
+            System.out.println("Database path: " + config.getDatabasePath());
+            databaseManager = new DatabaseManager(config.getDatabasePath());
+            try {
+                databaseManager.initialize();
+                issueStore = new H2IssueStore(databaseManager, config.getMaxIssuesDisplayed());
+            } catch (SQLException e) {
+                System.err.println("Failed to initialize H2 database: " + e.getMessage());
+                System.err.println("Falling back to in-memory storage.");
+                issueStore = new IssueStore(config.getMaxIssuesDisplayed());
+            }
+        } else {
+            System.out.println("Storage: In-memory (data will be lost on restart)");
+            issueStore = new IssueStore(config.getMaxIssuesDisplayed());
+        }
         
         // Create the analysis service
         analysisService = new AnalysisService(issueStore);
@@ -155,6 +175,10 @@ public class LogDashboardApp {
             logWatcher.stop();
             configWatcher.stop();
             webServer.stop();
+            // Close H2 database connection if using H2 storage
+            if (issueStore instanceof H2IssueStore) {
+                ((H2IssueStore) issueStore).close();
+            }
             System.out.println("Goodbye!");
         }));
         
