@@ -1,5 +1,7 @@
 package com.logdashboard.store;
 
+import java.io.File;
+import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Connection;
@@ -22,10 +24,34 @@ public class DatabaseManager {
     
     /**
      * Creates a DatabaseManager with the default database location.
-     * Database will be stored in ./data/log-dashboard
+     * Database will be stored in the same directory as the JAR file under data/log-dashboard
      */
     public DatabaseManager() {
-        this(Paths.get("data", DEFAULT_DB_NAME).toString());
+        this(Paths.get(getJarDirectory(), "data", DEFAULT_DB_NAME).toString());
+    }
+    
+    /**
+     * Gets the directory where the JAR file (or class files) is located.
+     * 
+     * @return Path to the directory containing the application
+     */
+    private static String getJarDirectory() {
+        try {
+            // Get the location of the DatabaseManager class
+            File jarFile = new File(DatabaseManager.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI());
+            
+            // If it's a JAR file, get its parent directory
+            // If it's a directory (running from IDE), use it directly
+            if (jarFile.isFile()) {
+                return jarFile.getParentFile().getAbsolutePath();
+            } else {
+                return jarFile.getAbsolutePath();
+            }
+        } catch (URISyntaxException e) {
+            System.err.println("Could not determine JAR location, using current directory: " + e.getMessage());
+            return ".";
+        }
     }
     
     /**
