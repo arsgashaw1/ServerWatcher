@@ -17,6 +17,7 @@ public class LogParser {
     private final List<Pattern> exceptionPatterns;
     private final List<Pattern> errorPatterns;
     private final List<Pattern> warningPatterns;
+    private final List<Pattern> exclusionPatterns;  // False positive filters
     
     // Pattern to detect stack trace elements
     private static final Pattern STACK_TRACE_PATTERN = 
@@ -30,6 +31,9 @@ public class LogParser {
         this.exceptionPatterns = compilePatterns(config.getExceptionPatterns());
         this.errorPatterns = compilePatterns(config.getErrorPatterns());
         this.warningPatterns = compilePatterns(config.getWarningPatterns());
+        this.exclusionPatterns = compilePatterns(
+            config.getExclusionPatterns() != null ? config.getExclusionPatterns() : new ArrayList<>()
+        );
     }
     
     private List<Pattern> compilePatterns(List<String> patterns) {
@@ -55,6 +59,13 @@ public class LogParser {
         
         while (i < lines.size()) {
             String line = lines.get(i);
+            
+            // Check exclusion patterns first - skip false positives
+            if (matchesAny(line, exclusionPatterns)) {
+                lineNum++;
+                i++;
+                continue;
+            }
             
             // Check for exception patterns (highest priority)
             if (matchesAny(line, exceptionPatterns)) {

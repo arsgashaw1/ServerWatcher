@@ -15,6 +15,7 @@ public class DashboardConfig {
     private List<String> exceptionPatterns;
     private List<String> errorPatterns;
     private List<String> warningPatterns;
+    private List<String> exclusionPatterns;  // Patterns to exclude (false positives)
     private int pollingIntervalSeconds;
     private int maxIssuesDisplayed;
     private boolean enableSound;
@@ -46,6 +47,11 @@ public class DashboardConfig {
         this.warningPatterns = Arrays.asList(
             ".*\\bWARN\\b.*",
             ".*\\bWARNING\\b.*"
+        );
+        // Default exclusion patterns for common false positives
+        this.exclusionPatterns = Arrays.asList(
+            ".*Success:.*Failed: 0.*",  // Success messages with zero failures
+            ".*\\bFailed: 0\\b.*\\bSkipped: 0\\b.*"  // Summary lines with zero failures
         );
         this.pollingIntervalSeconds = 2;
         this.maxIssuesDisplayed = 500;
@@ -102,6 +108,14 @@ public class DashboardConfig {
 
     public void setWarningPatterns(List<String> warningPatterns) {
         this.warningPatterns = warningPatterns;
+    }
+
+    public List<String> getExclusionPatterns() {
+        return exclusionPatterns;
+    }
+
+    public void setExclusionPatterns(List<String> exclusionPatterns) {
+        this.exclusionPatterns = exclusionPatterns;
     }
 
     public int getPollingIntervalSeconds() {

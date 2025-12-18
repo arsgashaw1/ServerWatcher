@@ -51,6 +51,13 @@
     ".*\\bWARN\\b.*",
     ".*\\bWARNING\\b.*"
   ],
+  "exclusionPatterns": [
+    ".*extractMDB Success:.*Failed: 0.*",
+    ".*Success:.*Failed: 0.*Skipped: 0.*",
+    ".*\\bFailed: 0\\b.*\\bSkipped: 0\\b.*",
+    ".*completed successfully.*",
+    ".*0 errors.*0 warnings.*"
+  ],
   "pollingIntervalSeconds": 2,
   "maxIssuesDisplayed": 500,
   "enableSound": false,

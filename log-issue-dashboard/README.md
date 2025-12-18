@@ -190,6 +190,7 @@ java -jar log-issue-dashboard.jar ./config 9090
 | `exceptionPatterns` | array | (see above) | Regex patterns to detect exceptions |
 | `errorPatterns` | array | (see above) | Regex patterns to detect errors |
 | `warningPatterns` | array | (see above) | Regex patterns to detect warnings |
+| `exclusionPatterns` | array | (see above) | Regex patterns to exclude (false positives) |
 | `pollingIntervalSeconds` | int | `2` | How often to check for file changes |
 | `maxIssuesDisplayed` | int | `500` | Maximum issues to keep in store |
 | `webServerPort` | int | `8080` | HTTP server port |
@@ -242,6 +243,43 @@ The dashboard supports two storage backends:
 | `description` | string | `null` | Optional description |
 | `encoding` | string | `UTF-8` | Character encoding for log files |
 | `useIconv` | boolean | `false` | Use external `iconv` command for encoding conversion |
+
+### Exclusion Patterns (False Positive Filtering)
+
+Exclusion patterns allow you to filter out false positives - log lines that match error/warning patterns but are actually success messages or harmless.
+
+**Common False Positives:**
+- Success summaries containing "Failed: 0"
+- Status messages with zero error counts
+- Informational messages containing error-related keywords
+
+**Example Configuration:**
+```json
+{
+  "exclusionPatterns": [
+    ".*extractMDB Success:.*Failed: 0.*",
+    ".*Success:.*Failed: 0.*Skipped: 0.*",
+    ".*\\bFailed: 0\\b.*\\bSkipped: 0\\b.*",
+    ".*completed successfully.*",
+    ".*0 errors.*0 warnings.*",
+    ".*Build succeeded.*"
+  ]
+}
+```
+
+**How It Works:**
+1. Each log line is first checked against exclusion patterns
+2. If any exclusion pattern matches, the line is skipped entirely
+3. Only non-excluded lines are checked against error/warning patterns
+
+**Pattern Examples:**
+
+| Pattern | Matches | Purpose |
+|---------|---------|---------|
+| `.*Failed: 0.*` | "extractMDB Success: 13 - Failed: 0 Skipped: 0" | Ignore success summaries |
+| `.*\\b0 errors\\b.*` | "Compilation completed: 0 errors, 0 warnings" | Ignore clean builds |
+| `.*successfully.*` | "Operation completed successfully" | Ignore success messages |
+| `.*\\[INFO\\].*ERROR.*` | "[INFO] No ERROR found" | Ignore info about errors |
 
 ### EBCDIC and Character Encoding Support
 
