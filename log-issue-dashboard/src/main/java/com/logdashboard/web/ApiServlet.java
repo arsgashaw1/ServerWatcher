@@ -338,7 +338,7 @@ public class ApiServlet extends HttpServlet {
     }
     
     private void handleGetDateRange(PrintWriter out) {
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
         Map<String, Object> dateRange = new LinkedHashMap<>();
         
         issueStore.getEarliestIssueTime().ifPresentOrElse(
