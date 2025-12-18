@@ -56,18 +56,40 @@ public class DatabaseManager {
     
     /**
      * Creates a DatabaseManager with a custom database path.
+     * If the path is relative, it will be resolved against the JAR file's directory.
+     * If the path is absolute, it will be used as-is.
      * 
      * @param dbPath Path to the database file (without .mv.db extension)
      */
     public DatabaseManager(String dbPath) {
-        this.dbPath = dbPath;
+        this.dbPath = resolveDatabasePath(dbPath);
         // H2 file-based URL with auto-server mode disabled for embedded use
         // Using MVCC for better concurrent access
-        this.jdbcUrl = "jdbc:h2:file:" + dbPath + 
+        this.jdbcUrl = "jdbc:h2:file:" + this.dbPath + 
                 ";MODE=MySQL" +
                 ";AUTO_RECONNECT=TRUE" +
                 ";DB_CLOSE_DELAY=-1" +
                 ";DB_CLOSE_ON_EXIT=FALSE";
+    }
+    
+    /**
+     * Resolves a database path. If relative, resolves against the JAR directory.
+     * If absolute, returns as-is.
+     * 
+     * @param dbPath The configured database path
+     * @return The resolved absolute path
+     */
+    private static String resolveDatabasePath(String dbPath) {
+        Path path = Paths.get(dbPath);
+        
+        // If absolute path, use as-is
+        if (path.isAbsolute()) {
+            return dbPath;
+        }
+        
+        // Relative path - resolve against JAR directory
+        String jarDir = getJarDirectory();
+        return Paths.get(jarDir, dbPath).toString();
     }
     
     /**

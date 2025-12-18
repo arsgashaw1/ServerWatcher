@@ -64,5 +64,6 @@
   "windowTitle": "Sentinel",
   "webServerPort": 8080,
   "storageType": "h2",
-  "databasePath": "data/log-dashboard"
+  "databasePath": "data/log-dashboard",
+  "_databasePath_comment": "Path to H2 database file (without .mv.db extension). Relative paths are resolved from the JAR file's directory. Use absolute path like '/var/data/sentinel/db' to store elsewhere."
 }
