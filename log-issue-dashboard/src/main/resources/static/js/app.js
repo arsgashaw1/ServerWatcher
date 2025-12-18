@@ -407,17 +407,19 @@ class LogDashboard {
             return false;
         }
         
-        // Check date filters
+        // Check datetime filters
         if (this.filters.dateFrom || this.filters.dateTo) {
             const issueDate = new Date(issue.detectedAt);
             if (this.filters.dateFrom) {
+                // datetime-local format: YYYY-MM-DDTHH:mm
                 const fromDate = new Date(this.filters.dateFrom);
-                fromDate.setHours(0, 0, 0, 0);
                 if (issueDate < fromDate) return false;
             }
             if (this.filters.dateTo) {
+                // datetime-local format: YYYY-MM-DDTHH:mm
                 const toDate = new Date(this.filters.dateTo);
-                toDate.setHours(23, 59, 59, 999);
+                // Add 59 seconds to include the full minute
+                toDate.setSeconds(59, 999);
                 if (issueDate > toDate) return false;
             }
         }
@@ -696,35 +698,56 @@ class LogDashboard {
     
     setQuickDateFilter(preset) {
         const today = new Date();
-        const toDate = today.toISOString().split('T')[0];
-        let fromDate;
+        // Format for datetime-local: YYYY-MM-DDTHH:mm
+        const toDateTime = this.formatDateTimeLocal(today, true); // end of day
+        let fromDateTime;
         
         switch (preset) {
             case 'today':
-                fromDate = toDate;
+                const startOfToday = new Date(today);
+                startOfToday.setHours(0, 0, 0, 0);
+                fromDateTime = this.formatDateTimeLocal(startOfToday, false);
                 break;
             case '7d':
                 // Last 7 days including today: subtract 6 days
                 const week = new Date(today);
                 week.setDate(week.getDate() - 6);
-                fromDate = week.toISOString().split('T')[0];
+                week.setHours(0, 0, 0, 0);
+                fromDateTime = this.formatDateTimeLocal(week, false);
                 break;
             case '30d':
                 // Last 30 days including today: subtract 29 days
                 const month = new Date(today);
                 month.setDate(month.getDate() - 29);
-                fromDate = month.toISOString().split('T')[0];
+                month.setHours(0, 0, 0, 0);
+                fromDateTime = this.formatDateTimeLocal(month, false);
                 break;
             default:
                 return;
         }
         
-        document.getElementById('dateFromFilter').value = fromDate;
-        document.getElementById('dateToFilter').value = toDate;
-        this.filters.dateFrom = fromDate;
-        this.filters.dateTo = toDate;
+        document.getElementById('dateFromFilter').value = fromDateTime;
+        document.getElementById('dateToFilter').value = toDateTime;
+        this.filters.dateFrom = fromDateTime;
+        this.filters.dateTo = toDateTime;
         this.pagination.offset = 0;
         this.loadIssues();
+    }
+    
+    /**
+     * Formats a Date object for datetime-local input (YYYY-MM-DDTHH:mm)
+     */
+    formatDateTimeLocal(date, endOfDay = false) {
+        if (endOfDay) {
+            date = new Date(date);
+            date.setHours(23, 59, 0, 0);
+        }
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${year}-${month}-${day}T${hours}:${minutes}`;
     }
     
     clearFilters() {
