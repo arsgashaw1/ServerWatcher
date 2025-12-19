@@ -288,6 +288,11 @@ public class EventStreamServlet extends HttpServlet {
         // Clean up failed clients (removes from both clients and viewerInfoMap)
         for (AsyncContext client : failedClients) {
             removeClient(client);
+            try {
+                client.complete();
+            } catch (Exception ignored) {
+                // Already completed or in error state
+            }
         }
     }
     
