@@ -178,11 +178,28 @@ public class EventStreamServlet extends HttpServlet {
     
     /**
      * Removes a client and broadcasts updated viewer list.
+     * Uses a flag to prevent recursive broadcasts and handles the case
+     * where this is called from onComplete context.
      */
     private void removeClient(AsyncContext asyncContext) {
-        clients.remove(asyncContext);
+        // Only broadcast if we actually removed the client (prevents duplicate broadcasts)
+        boolean removed = clients.remove(asyncContext);
         viewerInfoMap.remove(asyncContext);
-        broadcastViewers();
+        
+        if (removed) {
+            // Schedule broadcast on a separate thread to avoid issues with
+            // calling from async listener context (onComplete/onError/onTimeout)
+            // where the connection may be in an invalid state
+            new Thread(() -> {
+                try {
+                    // Small delay to ensure async context cleanup is complete
+                    Thread.sleep(50);
+                    broadcastViewers();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }, "viewer-broadcast").start();
+        }
     }
     
     /**
@@ -283,6 +300,7 @@ public class EventStreamServlet extends HttpServlet {
     
     /**
      * Broadcasts the current viewer list to all connected clients.
+     * Handles failed clients by removing them from the client list.
      */
     public void broadcastViewers() {
         Map<String, Object> viewerData = new LinkedHashMap<>();
@@ -292,14 +310,32 @@ public class EventStreamServlet extends HttpServlet {
         
         String jsonData = GSON.toJson(viewerData);
         
+        List<AsyncContext> failedClients = new ArrayList<>();
+        
         for (AsyncContext client : clients) {
             try {
                 PrintWriter out = client.getResponse().getWriter();
                 out.write("event: viewers\n");
                 out.write("data: " + jsonData + "\n\n");
                 out.flush();
+                
+                if (out.checkError()) {
+                    failedClients.add(client);
+                }
             } catch (Exception e) {
-                // Client may have disconnected, will be cleaned up
+                // Client may have disconnected - mark for removal
+                failedClients.add(client);
+            }
+        }
+        
+        // Clean up failed clients (remove directly to avoid recursive broadcast)
+        for (AsyncContext client : failedClients) {
+            clients.remove(client);
+            viewerInfoMap.remove(client);
+            try {
+                client.complete();
+            } catch (Exception ignored) {
+                // Already completed or in error state
             }
         }
     }
