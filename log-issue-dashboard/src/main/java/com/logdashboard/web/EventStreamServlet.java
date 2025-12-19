@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Server-Sent Events (SSE) servlet for real-time issue streaming.
@@ -46,10 +47,16 @@ public class EventStreamServlet extends HttpServlet {
     // Track viewer information: maps AsyncContext to ViewerInfo
     private final ConcurrentHashMap<AsyncContext, ViewerInfo> viewerInfoMap;
     
+    // Per-client locks to prevent concurrent writes to the same PrintWriter
+    // This is necessary because PrintWriter is not thread-safe and concurrent
+    // writes can corrupt Tomcat's internal character encoder buffers
+    private final ConcurrentHashMap<AsyncContext, ReentrantLock> clientLocks;
+    
     public EventStreamServlet(IssueRepository issueStore) {
         this.issueStore = issueStore;
         this.clients = new CopyOnWriteArrayList<>();
         this.viewerInfoMap = new ConcurrentHashMap<>();
+        this.clientLocks = new ConcurrentHashMap<>();
         
         // Register listener for new issues
         issueStore.addListener(this::broadcastIssue);
@@ -120,9 +127,10 @@ public class EventStreamServlet extends HttpServlet {
             out.write("data: {\"status\":\"connected\",\"viewerId\":\"" + viewerInfo.getViewerId() + "\",\"clientCount\":" + (clients.size() + 1) + ",\"maxClients\":" + MAX_SSE_CLIENTS + "}\n\n");
             out.flush();
             
-            // Add to active clients and viewer map
+            // Add to active clients, viewer map, and create lock for this client
             clients.add(asyncContext);
             viewerInfoMap.put(asyncContext, viewerInfo);
+            clientLocks.put(asyncContext, new ReentrantLock());
             
             // Broadcast updated viewer list to all clients
             broadcastViewers();
@@ -185,6 +193,7 @@ public class EventStreamServlet extends HttpServlet {
         // Only broadcast if we actually removed the client (prevents duplicate broadcasts)
         boolean removed = clients.remove(asyncContext);
         viewerInfoMap.remove(asyncContext);
+        clientLocks.remove(asyncContext);
         
         if (removed) {
             // Schedule broadcast on a separate thread to avoid issues with
@@ -212,6 +221,13 @@ public class EventStreamServlet extends HttpServlet {
         List<AsyncContext> failedClients = new ArrayList<>();
         
         for (AsyncContext client : clients) {
+            ReentrantLock lock = clientLocks.get(client);
+            if (lock == null) {
+                // Client was removed, skip
+                continue;
+            }
+            
+            lock.lock();
             try {
                 PrintWriter out = client.getResponse().getWriter();
                 out.write("event: issue\n");
@@ -223,6 +239,8 @@ public class EventStreamServlet extends HttpServlet {
                 }
             } catch (Exception e) {
                 failedClients.add(client);
+            } finally {
+                lock.unlock();
             }
         }
         
@@ -244,13 +262,26 @@ public class EventStreamServlet extends HttpServlet {
         List<AsyncContext> failedClients = new ArrayList<>();
         
         for (AsyncContext client : clients) {
+            ReentrantLock lock = clientLocks.get(client);
+            if (lock == null) {
+                // Client was removed, skip
+                continue;
+            }
+            
+            lock.lock();
             try {
                 PrintWriter out = client.getResponse().getWriter();
                 out.write("event: stats\n");
                 out.write("data: " + jsonData + "\n\n");
                 out.flush();
+                
+                if (out.checkError()) {
+                    failedClients.add(client);
+                }
             } catch (Exception e) {
                 failedClients.add(client);
+            } finally {
+                lock.unlock();
             }
         }
         
@@ -313,6 +344,13 @@ public class EventStreamServlet extends HttpServlet {
         List<AsyncContext> failedClients = new ArrayList<>();
         
         for (AsyncContext client : clients) {
+            ReentrantLock lock = clientLocks.get(client);
+            if (lock == null) {
+                // Client was removed, skip
+                continue;
+            }
+            
+            lock.lock();
             try {
                 PrintWriter out = client.getResponse().getWriter();
                 out.write("event: viewers\n");
@@ -325,6 +363,8 @@ public class EventStreamServlet extends HttpServlet {
             } catch (Exception e) {
                 // Client may have disconnected - mark for removal
                 failedClients.add(client);
+            } finally {
+                lock.unlock();
             }
         }
         
@@ -332,6 +372,7 @@ public class EventStreamServlet extends HttpServlet {
         for (AsyncContext client : failedClients) {
             clients.remove(client);
             viewerInfoMap.remove(client);
+            clientLocks.remove(client);
             try {
                 client.complete();
             } catch (Exception ignored) {
