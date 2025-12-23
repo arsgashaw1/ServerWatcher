@@ -1,14 +1,18 @@
 /**
  * Server Details Management - Frontend Application
+ * Supports hierarchical structure: Server Groups -> Sub-Servers
  */
 
 class ServerManager {
     constructor() {
-        this.servers = [];
+        this.serverGroups = [];
         this.isAdmin = false;
         this.adminCredentials = null;
+        this.editingGroupId = null;
         this.editingServerId = null;
-        this.deletingServerId = null;
+        this.currentGroupId = null; // For adding sub-servers
+        this.deleteType = null; // 'group' or 'server'
+        this.deleteId = null;
         
         this.init();
     }
@@ -16,7 +20,7 @@ class ServerManager {
     init() {
         this.setupTheme();
         this.setupEventListeners();
-        this.loadServers();
+        this.loadServerGroups();
         this.checkStoredCredentials();
     }
     
@@ -49,12 +53,17 @@ class ServerManager {
         document.getElementById('adminToggle').addEventListener('click', () => this.toggleAdminForm());
         document.getElementById('loginBtn').addEventListener('click', () => this.login());
         
-        // Add server button
-        document.getElementById('addServerBtn').addEventListener('click', () => this.showAddModal());
+        // Add server group button
+        document.getElementById('addServerGroupBtn').addEventListener('click', () => this.showAddGroupModal());
         
-        // Modal buttons
-        document.getElementById('modalClose').addEventListener('click', () => this.closeModal());
-        document.getElementById('cancelBtn').addEventListener('click', () => this.closeModal());
+        // Server Group Modal buttons
+        document.getElementById('groupModalClose').addEventListener('click', () => this.closeGroupModal());
+        document.getElementById('groupCancelBtn').addEventListener('click', () => this.closeGroupModal());
+        document.getElementById('groupSaveBtn').addEventListener('click', () => this.saveServerGroup());
+        
+        // Sub-Server Modal buttons
+        document.getElementById('modalClose').addEventListener('click', () => this.closeServerModal());
+        document.getElementById('cancelBtn').addEventListener('click', () => this.closeServerModal());
         document.getElementById('saveBtn').addEventListener('click', () => this.saveServer());
         
         // Delete modal
@@ -63,8 +72,11 @@ class ServerManager {
         document.getElementById('deleteConfirmBtn').addEventListener('click', () => this.confirmDelete());
         
         // Close modals on outside click
+        document.getElementById('serverGroupModal').addEventListener('click', (e) => {
+            if (e.target.id === 'serverGroupModal') this.closeGroupModal();
+        });
         document.getElementById('serverModal').addEventListener('click', (e) => {
-            if (e.target.id === 'serverModal') this.closeModal();
+            if (e.target.id === 'serverModal') this.closeServerModal();
         });
         document.getElementById('deleteModal').addEventListener('click', (e) => {
             if (e.target.id === 'deleteModal') this.closeDeleteModal();
@@ -73,7 +85,8 @@ class ServerManager {
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                this.closeModal();
+                this.closeGroupModal();
+                this.closeServerModal();
                 this.closeDeleteModal();
             }
         });
@@ -108,7 +121,6 @@ class ServerManager {
     }
     
     async validateStoredCredentials() {
-        // Validate stored credentials using the auth endpoint
         if (!this.adminCredentials) return;
         
         try {
@@ -125,9 +137,8 @@ class ServerManager {
             if (data.valid) {
                 this.isAdmin = true;
                 this.updateAdminUI();
-                this.loadServers(); // Reload to get full data with credentials
+                this.loadServerGroups();
             } else {
-                // Invalid credentials - clear them
                 this.isAdmin = false;
                 sessionStorage.removeItem('adminCredentials');
                 this.adminCredentials = null;
@@ -149,7 +160,6 @@ class ServerManager {
             return;
         }
         
-        // Validate credentials using the auth endpoint
         try {
             const response = await fetch('/infra/auth/validate', {
                 method: 'GET',
@@ -172,7 +182,7 @@ class ServerManager {
                 this.isAdmin = true;
                 this.showAdminStatus('Logged in successfully!', 'success');
                 this.updateAdminUI();
-                this.loadServers(); // Reload to get full data with credentials
+                this.loadServerGroups();
             } else {
                 this.showAdminStatus(data.error || 'Invalid credentials', 'error');
             }
@@ -189,50 +199,100 @@ class ServerManager {
     }
     
     updateAdminUI() {
-        const addBtn = document.getElementById('addServerBtn');
-        const adminColumns = document.querySelectorAll('.admin-only');
+        const addBtn = document.getElementById('addServerGroupBtn');
         
         if (this.isAdmin) {
             addBtn.style.display = 'inline-flex';
-            adminColumns.forEach(col => col.style.display = 'table-cell');
-            this.renderServers();
         } else {
             addBtn.style.display = 'none';
-            adminColumns.forEach(col => col.style.display = 'none');
         }
+        
+        this.renderServerGroups();
     }
     
     // Data loading
-    async loadServers() {
+    async loadServerGroups() {
         try {
-            const response = await fetch('/infra/servers');
+            const response = await fetch('/infra/server-groups');
             const data = await response.json();
-            this.servers = data.servers || [];
-            this.renderServers();
+            this.serverGroups = data.serverGroups || [];
+            this.renderServerGroups();
         } catch (error) {
-            console.error('Error loading servers:', error);
+            console.error('Error loading server groups:', error);
         }
     }
     
     // Rendering
-    renderServers() {
-        const tbody = document.getElementById('serverTableBody');
+    renderServerGroups() {
+        const container = document.getElementById('serverGroupsContainer');
         
-        if (this.servers.length === 0) {
-            tbody.innerHTML = `
-                <tr class="empty-row">
-                    <td colspan="${this.isAdmin ? 6 : 5}">
-                        <div class="empty-state">
-                            <div class="empty-icon">🖥️</div>
-                            <p>No servers registered yet</p>
-                        </div>
-                    </td>
-                </tr>
+        if (this.serverGroups.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">🖥️</div>
+                    <p>No server groups registered yet</p>
+                </div>
             `;
             return;
         }
         
-        tbody.innerHTML = this.servers.map((server, index) => `
+        container.innerHTML = this.serverGroups.map(group => this.renderServerGroup(group)).join('');
+    }
+    
+    renderServerGroup(group) {
+        const subServers = group.subServers || [];
+        
+        return `
+            <div class="server-group" data-group-id="${group.id}">
+                <div class="server-group-header">
+                    <div class="server-group-info">
+                        <span class="toggle-icon" onclick="serverManager.toggleGroup(${group.id})">▼</span>
+                        <h3 class="server-group-name">${this.escapeHtml(group.serverName)}</h3>
+                        ${group.note ? `<span class="server-group-note">${this.escapeHtml(group.note)}</span>` : ''}
+                    </div>
+                    <div class="server-group-actions">
+                        ${this.isAdmin ? `
+                            <button class="btn btn-sm btn-primary" onclick="serverManager.showAddServerModal(${group.id})" title="Add Sub-Server">
+                                + Add
+                            </button>
+                            <button class="btn btn-sm btn-secondary" onclick="serverManager.editServerGroup(${group.id})" title="Edit Group">
+                                ✏️
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="serverManager.showDeleteGroupModal(${group.id})" title="Delete Group">
+                                🗑️
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+                <div class="server-group-content" id="group-content-${group.id}">
+                    ${subServers.length > 0 ? `
+                        <table class="infra-table sub-server-table">
+                            <thead>
+                                <tr>
+                                    <th>No</th>
+                                    <th>Server Name</th>
+                                    <th>DB Type</th>
+                                    <th>Port</th>
+                                    <th>Note</th>
+                                    ${this.isAdmin ? '<th>Actions</th>' : ''}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${subServers.map((server, index) => this.renderSubServer(server, index)).join('')}
+                            </tbody>
+                        </table>
+                    ` : `
+                        <div class="empty-sub-servers">
+                            <p>No sub-servers in this group</p>
+                        </div>
+                    `}
+                </div>
+            </div>
+        `;
+    }
+    
+    renderSubServer(server, index) {
+        return `
             <tr data-id="${server.id}">
                 <td>${index + 1}</td>
                 <td>${this.escapeHtml(server.serverName)}</td>
@@ -240,40 +300,92 @@ class ServerManager {
                 <td>${server.port || '-'}</td>
                 <td class="note-cell">${this.escapeHtml(server.note || '-')}</td>
                 ${this.isAdmin ? `
-                    <td class="actions-cell admin-only">
-                        <button class="btn btn-sm btn-secondary" onclick="serverManager.editServer(${server.id})" title="Edit">
+                    <td class="actions-cell">
+                        <button class="btn btn-sm btn-secondary" onclick="serverManager.editServer(${server.id}, ${server.groupId})" title="Edit">
                             ✏️
                         </button>
-                        <button class="btn btn-sm btn-danger" onclick="serverManager.showDeleteModal(${server.id})" title="Delete">
+                        <button class="btn btn-sm btn-danger" onclick="serverManager.showDeleteServerModal(${server.id})" title="Delete">
                             🗑️
                         </button>
                     </td>
                 ` : ''}
             </tr>
-        `).join('');
+        `;
     }
     
-    // Modal handling
-    showAddModal() {
+    toggleGroup(groupId) {
+        const content = document.getElementById(`group-content-${groupId}`);
+        const group = content.closest('.server-group');
+        const icon = group.querySelector('.toggle-icon');
+        
+        if (content.style.display === 'none') {
+            content.style.display = 'block';
+            icon.textContent = '▼';
+        } else {
+            content.style.display = 'none';
+            icon.textContent = '▶';
+        }
+    }
+    
+    // Server Group Modal handling
+    showAddGroupModal() {
+        if (!this.isAdmin) {
+            alert('Please login as admin to add server groups');
+            return;
+        }
+        
+        this.editingGroupId = null;
+        document.getElementById('groupModalTitle').textContent = 'Add Server Group';
+        document.getElementById('serverGroupForm').reset();
+        document.getElementById('groupId').value = '';
+        document.getElementById('serverGroupModal').classList.add('active');
+    }
+    
+    editServerGroup(id) {
+        const group = this.serverGroups.find(g => g.id === id);
+        if (!group) return;
+        
+        this.editingGroupId = id;
+        document.getElementById('groupModalTitle').textContent = 'Edit Server Group';
+        document.getElementById('groupId').value = id;
+        document.getElementById('groupServerName').value = group.serverName || '';
+        document.getElementById('groupNote').value = group.note || '';
+        document.getElementById('serverGroupModal').classList.add('active');
+    }
+    
+    closeGroupModal() {
+        document.getElementById('serverGroupModal').classList.remove('active');
+        this.editingGroupId = null;
+    }
+    
+    // Sub-Server Modal handling
+    showAddServerModal(groupId) {
         if (!this.isAdmin) {
             alert('Please login as admin to add servers');
             return;
         }
         
         this.editingServerId = null;
-        document.getElementById('modalTitle').textContent = 'Add Server';
+        this.currentGroupId = groupId;
+        document.getElementById('modalTitle').textContent = 'Add Sub-Server';
         document.getElementById('serverForm').reset();
         document.getElementById('serverId').value = '';
+        document.getElementById('serverGroupId').value = groupId;
         document.getElementById('serverModal').classList.add('active');
     }
     
-    editServer(id) {
-        const server = this.servers.find(s => s.id === id);
+    editServer(id, groupId) {
+        const group = this.serverGroups.find(g => g.id === groupId);
+        if (!group) return;
+        
+        const server = group.subServers.find(s => s.id === id);
         if (!server) return;
         
         this.editingServerId = id;
-        document.getElementById('modalTitle').textContent = 'Edit Server';
+        this.currentGroupId = groupId;
+        document.getElementById('modalTitle').textContent = 'Edit Sub-Server';
         document.getElementById('serverId').value = id;
+        document.getElementById('serverGroupId').value = groupId;
         document.getElementById('serverName').value = server.serverName || '';
         document.getElementById('dbType').value = server.dbType || '';
         document.getElementById('port').value = server.port || '';
@@ -281,28 +393,88 @@ class ServerManager {
         document.getElementById('serverModal').classList.add('active');
     }
     
-    closeModal() {
+    closeServerModal() {
         document.getElementById('serverModal').classList.remove('active');
         this.editingServerId = null;
+        this.currentGroupId = null;
     }
     
-    showDeleteModal(id) {
-        this.deletingServerId = id;
+    // Delete Modal handling
+    showDeleteGroupModal(id) {
+        this.deleteType = 'group';
+        this.deleteId = id;
+        document.getElementById('deleteMessage').textContent = 
+            'Are you sure you want to delete this server group? All sub-servers will also be deleted.';
+        document.getElementById('deleteModal').classList.add('active');
+    }
+    
+    showDeleteServerModal(id) {
+        this.deleteType = 'server';
+        this.deleteId = id;
+        document.getElementById('deleteMessage').textContent = 
+            'Are you sure you want to delete this sub-server?';
         document.getElementById('deleteModal').classList.add('active');
     }
     
     closeDeleteModal() {
         document.getElementById('deleteModal').classList.remove('active');
-        this.deletingServerId = null;
+        this.deleteType = null;
+        this.deleteId = null;
     }
     
-    // CRUD Operations
+    // CRUD Operations - Server Groups
+    async saveServerGroup() {
+        if (!this.isAdmin || !this.adminCredentials) {
+            alert('Please login as admin');
+            return;
+        }
+        
+        const serverName = document.getElementById('groupServerName').value.trim();
+        const note = document.getElementById('groupNote').value.trim();
+        
+        if (!serverName) {
+            alert('Server name is required');
+            return;
+        }
+        
+        const groupData = { serverName, note };
+        
+        try {
+            const isEdit = this.editingGroupId !== null;
+            const url = isEdit ? `/infra/server-groups/${this.editingGroupId}` : '/infra/server-groups';
+            const method = isEdit ? 'PUT' : 'POST';
+            
+            const response = await fetch(url, {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Admin-Username': this.adminCredentials.username,
+                    'X-Admin-Password': this.adminCredentials.password
+                },
+                body: JSON.stringify(groupData)
+            });
+            
+            if (response.ok) {
+                this.closeGroupModal();
+                this.loadServerGroups();
+            } else {
+                const data = await response.json();
+                alert(data.error || 'Failed to save server group');
+            }
+        } catch (error) {
+            console.error('Error saving server group:', error);
+            alert('Failed to save server group');
+        }
+    }
+    
+    // CRUD Operations - Sub-Servers
     async saveServer() {
         if (!this.isAdmin || !this.adminCredentials) {
             alert('Please login as admin');
             return;
         }
         
+        const groupId = document.getElementById('serverGroupId').value;
         const serverName = document.getElementById('serverName').value.trim();
         const dbType = document.getElementById('dbType').value;
         const port = document.getElementById('port').value;
@@ -314,6 +486,7 @@ class ServerManager {
         }
         
         const serverData = {
+            groupId: parseInt(groupId),
             serverName,
             dbType,
             port: port ? parseInt(port) : 0,
@@ -322,7 +495,7 @@ class ServerManager {
         
         try {
             const isEdit = this.editingServerId !== null;
-            const url = isEdit ? `/infra/servers/${this.editingServerId}` : '/infra/servers';
+            const url = isEdit ? `/infra/servers/${this.editingServerId}` : `/infra/server-groups/${groupId}/servers`;
             const method = isEdit ? 'PUT' : 'POST';
             
             const response = await fetch(url, {
@@ -336,8 +509,8 @@ class ServerManager {
             });
             
             if (response.ok) {
-                this.closeModal();
-                this.loadServers();
+                this.closeServerModal();
+                this.loadServerGroups();
             } else {
                 const data = await response.json();
                 alert(data.error || 'Failed to save server');
@@ -349,12 +522,19 @@ class ServerManager {
     }
     
     async confirmDelete() {
-        if (!this.isAdmin || !this.adminCredentials || !this.deletingServerId) {
+        if (!this.isAdmin || !this.adminCredentials || !this.deleteId) {
             return;
         }
         
         try {
-            const response = await fetch(`/infra/servers/${this.deletingServerId}`, {
+            let url;
+            if (this.deleteType === 'group') {
+                url = `/infra/server-groups/${this.deleteId}`;
+            } else {
+                url = `/infra/servers/${this.deleteId}`;
+            }
+            
+            const response = await fetch(url, {
                 method: 'DELETE',
                 headers: {
                     'X-Admin-Username': this.adminCredentials.username,
@@ -364,14 +544,14 @@ class ServerManager {
             
             if (response.ok) {
                 this.closeDeleteModal();
-                this.loadServers();
+                this.loadServerGroups();
             } else {
                 const data = await response.json();
-                alert(data.error || 'Failed to delete server');
+                alert(data.error || 'Failed to delete');
             }
         } catch (error) {
-            console.error('Error deleting server:', error);
-            alert('Failed to delete server');
+            console.error('Error deleting:', error);
+            alert('Failed to delete');
         }
     }
     
