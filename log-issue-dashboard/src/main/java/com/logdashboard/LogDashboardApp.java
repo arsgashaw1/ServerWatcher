@@ -140,9 +140,15 @@ public class LogDashboardApp {
                 issueStore = new H2IssueStore(databaseManager, config.getMaxIssuesDisplayed());
                 
                 // Initialize infrastructure store for server/VM management
-                infrastructureStore = new InfrastructureStore(databaseManager);
+                infrastructureStore = new InfrastructureStore(databaseManager, config);
                 infrastructureStore.initialize();
-                System.out.println("Infrastructure management enabled.");
+                
+                if (config.hasAdminCredentials()) {
+                    System.out.println("Infrastructure management enabled with admin authentication.");
+                } else {
+                    System.out.println("Infrastructure management enabled (read-only mode).");
+                    System.out.println("WARNING: Set 'adminUsername' and 'adminPassword' in config to enable write access.");
+                }
             } catch (SQLException e) {
                 System.err.println("Failed to initialize H2 database: " + e.getMessage());
                 System.err.println("Falling back to in-memory storage.");

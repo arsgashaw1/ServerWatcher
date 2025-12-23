@@ -1,5 +1,6 @@
 package com.logdashboard.store;
 
+import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.model.ServerInfo;
 import com.logdashboard.model.VmInfo;
 
@@ -15,13 +16,11 @@ import java.util.Optional;
 public class InfrastructureStore {
     
     private final DatabaseManager databaseManager;
+    private final DashboardConfig config;
     
-    // Admin credentials - should be moved to config in production
-    private static final String ADMIN_USERNAME = "admin";
-    private static final String ADMIN_PASSWORD = "admin123";
-    
-    public InfrastructureStore(DatabaseManager databaseManager) {
+    public InfrastructureStore(DatabaseManager databaseManager, DashboardConfig config) {
         this.databaseManager = databaseManager;
+        this.config = config;
     }
     
     /**
@@ -59,10 +58,24 @@ public class InfrastructureStore {
     }
     
     /**
-     * Validates admin credentials.
+     * Validates admin credentials against the configured values.
+     * Returns false if credentials are not configured or don't match.
      */
     public boolean validateAdmin(String username, String password) {
-        return ADMIN_USERNAME.equals(username) && ADMIN_PASSWORD.equals(password);
+        if (!config.hasAdminCredentials()) {
+            System.err.println("WARNING: Admin credentials not configured. " +
+                "Please set 'adminUsername' and 'adminPassword' in dashboard-config.json");
+            return false;
+        }
+        return config.getAdminUsername().equals(username) 
+            && config.getAdminPassword().equals(password);
+    }
+    
+    /**
+     * Returns true if admin credentials are properly configured.
+     */
+    public boolean isAdminConfigured() {
+        return config.hasAdminCredentials();
     }
     
     // ==================== Server Info Operations ====================

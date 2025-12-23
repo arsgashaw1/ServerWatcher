@@ -108,16 +108,32 @@ class ServerManager {
     }
     
     async validateStoredCredentials() {
-        // Try a simple validation by making a test request
+        // Validate stored credentials using the auth endpoint
+        if (!this.adminCredentials) return;
+        
         try {
-            const response = await fetch('/infra/servers', {
-                method: 'GET'
+            const response = await fetch('/infra/auth/validate', {
+                method: 'GET',
+                headers: {
+                    'X-Admin-Username': this.adminCredentials.username,
+                    'X-Admin-Password': this.adminCredentials.password
+                }
             });
-            if (response.ok) {
+            
+            const data = await response.json();
+            
+            if (data.valid) {
                 this.isAdmin = true;
                 this.updateAdminUI();
+                this.loadServers(); // Reload to get full data with credentials
+            } else {
+                // Invalid credentials - clear them
+                this.isAdmin = false;
+                sessionStorage.removeItem('adminCredentials');
+                this.adminCredentials = null;
             }
         } catch (error) {
+            console.error('Credential validation error:', error);
             this.isAdmin = false;
             sessionStorage.removeItem('adminCredentials');
             this.adminCredentials = null;
@@ -133,34 +149,33 @@ class ServerManager {
             return;
         }
         
-        // Test credentials by making a simple POST request
+        // Validate credentials using the auth endpoint
         try {
-            const response = await fetch('/infra/servers', {
-                method: 'POST',
+            const response = await fetch('/infra/auth/validate', {
+                method: 'GET',
                 headers: {
-                    'Content-Type': 'application/json',
                     'X-Admin-Username': username,
                     'X-Admin-Password': password
-                },
-                body: JSON.stringify({ serverName: '' }) // Empty request to test auth
+                }
             });
             
-            if (response.status === 401 || response.status === 403) {
-                this.showAdminStatus('Invalid credentials', 'error');
+            const data = await response.json();
+            
+            if (!data.configured) {
+                this.showAdminStatus('Admin credentials not configured on server', 'error');
                 return;
             }
             
-            // If we get a 400 (bad request because serverName is empty), auth is OK
-            if (response.status === 400 || response.ok) {
+            if (data.valid) {
                 this.adminCredentials = { username, password };
                 sessionStorage.setItem('adminCredentials', JSON.stringify(this.adminCredentials));
                 this.isAdmin = true;
                 this.showAdminStatus('Logged in successfully!', 'success');
                 this.updateAdminUI();
-                return;
+                this.loadServers(); // Reload to get full data with credentials
+            } else {
+                this.showAdminStatus(data.error || 'Invalid credentials', 'error');
             }
-            
-            this.showAdminStatus('Login failed', 'error');
         } catch (error) {
             console.error('Login error:', error);
             this.showAdminStatus('Connection error', 'error');

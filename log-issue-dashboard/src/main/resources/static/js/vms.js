@@ -112,15 +112,32 @@ class VmManager {
     }
     
     async validateStoredCredentials() {
+        // Validate stored credentials using the auth endpoint
+        if (!this.adminCredentials) return;
+        
         try {
-            const response = await fetch('/infra/vms', {
-                method: 'GET'
+            const response = await fetch('/infra/auth/validate', {
+                method: 'GET',
+                headers: {
+                    'X-Admin-Username': this.adminCredentials.username,
+                    'X-Admin-Password': this.adminCredentials.password
+                }
             });
-            if (response.ok) {
+            
+            const data = await response.json();
+            
+            if (data.valid) {
                 this.isAdmin = true;
                 this.updateAdminUI();
+                this.loadVms(); // Reload to get full data with credentials
+            } else {
+                // Invalid credentials - clear them
+                this.isAdmin = false;
+                sessionStorage.removeItem('adminCredentials');
+                this.adminCredentials = null;
             }
         } catch (error) {
+            console.error('Credential validation error:', error);
             this.isAdmin = false;
             sessionStorage.removeItem('adminCredentials');
             this.adminCredentials = null;
@@ -136,32 +153,33 @@ class VmManager {
             return;
         }
         
+        // Validate credentials using the auth endpoint
         try {
-            const response = await fetch('/infra/vms', {
-                method: 'POST',
+            const response = await fetch('/infra/auth/validate', {
+                method: 'GET',
                 headers: {
-                    'Content-Type': 'application/json',
                     'X-Admin-Username': username,
                     'X-Admin-Password': password
-                },
-                body: JSON.stringify({ vmName: '' })
+                }
             });
             
-            if (response.status === 401 || response.status === 403) {
-                this.showAdminStatus('Invalid credentials', 'error');
+            const data = await response.json();
+            
+            if (!data.configured) {
+                this.showAdminStatus('Admin credentials not configured on server', 'error');
                 return;
             }
             
-            if (response.status === 400 || response.ok) {
+            if (data.valid) {
                 this.adminCredentials = { username, password };
                 sessionStorage.setItem('adminCredentials', JSON.stringify(this.adminCredentials));
                 this.isAdmin = true;
                 this.showAdminStatus('Logged in successfully!', 'success');
                 this.updateAdminUI();
-                return;
+                this.loadVms(); // Reload to get full data with credentials
+            } else {
+                this.showAdminStatus(data.error || 'Invalid credentials', 'error');
             }
-            
-            this.showAdminStatus('Login failed', 'error');
         } catch (error) {
             console.error('Login error:', error);
             this.showAdminStatus('Connection error', 'error');
@@ -191,7 +209,14 @@ class VmManager {
     // Data loading
     async loadVms() {
         try {
-            const response = await fetch('/infra/vms');
+            const headers = {};
+            // Include credentials if authenticated to get unmasked passwords
+            if (this.isAdmin && this.adminCredentials) {
+                headers['X-Admin-Username'] = this.adminCredentials.username;
+                headers['X-Admin-Password'] = this.adminCredentials.password;
+            }
+            
+            const response = await fetch('/infra/vms', { headers });
             const data = await response.json();
             this.vms = data.vms || [];
             this.renderVms();
@@ -218,34 +243,42 @@ class VmManager {
             return;
         }
         
-        tbody.innerHTML = this.vms.map((vm, index) => `
-            <tr data-id="${vm.id}">
-                <td>${index + 1}</td>
-                <td>${this.escapeHtml(vm.vmName)}</td>
-                <td>${this.escapeHtml(vm.loginUsername || '-')}</td>
-                <td class="password-cell">
-                    <span class="password-value ${this.showPasswords[vm.id] ? 'visible' : ''}" id="pwd-${vm.id}">
-                        ${this.showPasswords[vm.id] ? this.escapeHtml(vm.password || '-') : '••••••••'}
-                    </span>
-                    ${vm.password ? `
-                        <button class="btn-show-password" onclick="vmManager.togglePasswordVisibility(${vm.id})" title="Show/Hide Password">
-                            ${this.showPasswords[vm.id] ? '🙈' : '👁️'}
-                        </button>
-                    ` : ''}
-                </td>
-                <td class="portal-cell">${this.escapeHtml(vm.vmStartCredentialPortal || '-')}</td>
-                ${this.isAdmin ? `
-                    <td class="actions-cell admin-only">
-                        <button class="btn btn-sm btn-secondary" onclick="vmManager.editVm(${vm.id})" title="Edit">
-                            ✏️
-                        </button>
-                        <button class="btn btn-sm btn-danger" onclick="vmManager.showDeleteModal(${vm.id})" title="Delete">
-                            🗑️
-                        </button>
+        tbody.innerHTML = this.vms.map((vm, index) => {
+            // Check if password is available (only for authenticated users)
+            const hasPassword = vm.hasPassword || (vm.password && vm.password !== '********');
+            const passwordDisplay = this.showPasswords[vm.id] && this.isAdmin
+                ? this.escapeHtml(vm.password || '-') 
+                : (hasPassword ? '••••••••' : '-');
+            
+            return `
+                <tr data-id="${vm.id}">
+                    <td>${index + 1}</td>
+                    <td>${this.escapeHtml(vm.vmName)}</td>
+                    <td>${this.escapeHtml(vm.loginUsername || '-')}</td>
+                    <td class="password-cell">
+                        <span class="password-value ${this.showPasswords[vm.id] && this.isAdmin ? 'visible' : ''}" id="pwd-${vm.id}">
+                            ${passwordDisplay}
+                        </span>
+                        ${hasPassword && this.isAdmin ? `
+                            <button class="btn-show-password" onclick="vmManager.togglePasswordVisibility(${vm.id})" title="Show/Hide Password">
+                                ${this.showPasswords[vm.id] ? '🙈' : '👁️'}
+                            </button>
+                        ` : ''}
                     </td>
-                ` : ''}
-            </tr>
-        `).join('');
+                    <td class="portal-cell">${this.escapeHtml(vm.vmStartCredentialPortal || '-')}</td>
+                    ${this.isAdmin ? `
+                        <td class="actions-cell admin-only">
+                            <button class="btn btn-sm btn-secondary" onclick="vmManager.editVm(${vm.id})" title="Edit">
+                                ✏️
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="vmManager.showDeleteModal(${vm.id})" title="Delete">
+                                🗑️
+                            </button>
+                        </td>
+                    ` : ''}
+                </tr>
+            `;
+        }).join('');
     }
     
     togglePasswordVisibility(vmId) {

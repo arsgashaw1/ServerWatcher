@@ -50,16 +50,21 @@ public class InfraServlet extends HttpServlet {
         PrintWriter out = resp.getWriter();
         
         try {
+            // Check if user is authenticated (optional for GET - affects what data is returned)
+            boolean isAuthenticated = isAdminAuthenticated(req);
+            
             if (pathInfo.equals("/servers") || pathInfo.equals("/servers/")) {
                 handleGetServers(out);
             } else if (pathInfo.startsWith("/servers/")) {
                 String idStr = pathInfo.substring("/servers/".length());
                 handleGetServerById(idStr, out, resp);
             } else if (pathInfo.equals("/vms") || pathInfo.equals("/vms/")) {
-                handleGetVms(out);
+                handleGetVms(out, isAuthenticated);
             } else if (pathInfo.startsWith("/vms/")) {
                 String idStr = pathInfo.substring("/vms/".length());
-                handleGetVmById(idStr, out, resp);
+                handleGetVmById(idStr, out, resp, isAuthenticated);
+            } else if (pathInfo.equals("/auth/validate") || pathInfo.equals("/auth/validate/")) {
+                handleValidateAuth(req, out, resp);
             } else {
                 resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
                 out.write(GSON.toJson(error("Not found: " + pathInfo)));
@@ -198,9 +203,19 @@ public class InfraServlet extends HttpServlet {
     
     // ==================== Authentication ====================
     
+    /**
+     * Checks if the request has valid admin authentication.
+     * Returns false with error response if authentication fails.
+     */
     private boolean checkAdminAuth(HttpServletRequest req, HttpServletResponse resp, PrintWriter out) {
         String username = req.getHeader("X-Admin-Username");
         String password = req.getHeader("X-Admin-Password");
+        
+        if (!infrastructureStore.isAdminConfigured()) {
+            resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            out.write(GSON.toJson(error("Admin credentials not configured. Please set 'adminUsername' and 'adminPassword' in dashboard-config.json")));
+            return false;
+        }
         
         if (username == null || password == null) {
             resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -215,6 +230,53 @@ public class InfraServlet extends HttpServlet {
         }
         
         return true;
+    }
+    
+    /**
+     * Checks if the request has valid admin authentication without sending error response.
+     * Used for optional authentication (e.g., to determine what data to show).
+     */
+    private boolean isAdminAuthenticated(HttpServletRequest req) {
+        String username = req.getHeader("X-Admin-Username");
+        String password = req.getHeader("X-Admin-Password");
+        
+        if (username == null || password == null) {
+            return false;
+        }
+        
+        return infrastructureStore.validateAdmin(username, password);
+    }
+    
+    /**
+     * Handles auth validation request - used by frontend to verify credentials.
+     */
+    private void handleValidateAuth(HttpServletRequest req, PrintWriter out, HttpServletResponse resp) {
+        String username = req.getHeader("X-Admin-Username");
+        String password = req.getHeader("X-Admin-Password");
+        
+        Map<String, Object> response = new LinkedHashMap<>();
+        
+        if (!infrastructureStore.isAdminConfigured()) {
+            resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.put("valid", false);
+            response.put("configured", false);
+            response.put("error", "Admin credentials not configured on server");
+        } else if (username == null || password == null) {
+            resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.put("valid", false);
+            response.put("configured", true);
+            response.put("error", "Credentials not provided");
+        } else if (infrastructureStore.validateAdmin(username, password)) {
+            response.put("valid", true);
+            response.put("configured", true);
+        } else {
+            resp.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            response.put("valid", false);
+            response.put("configured", true);
+            response.put("error", "Invalid credentials");
+        }
+        
+        out.write(GSON.toJson(response));
     }
     
     // ==================== Server Handlers ====================
@@ -322,21 +384,23 @@ public class InfraServlet extends HttpServlet {
     
     // ==================== VM Handlers ====================
     
-    private void handleGetVms(PrintWriter out) {
+    private void handleGetVms(PrintWriter out, boolean isAuthenticated) {
         List<VmInfo> vms = infrastructureStore.getAllVms();
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("count", vms.size());
-        response.put("vms", vms);
+        // Mask sensitive data for unauthenticated users
+        response.put("vms", vms.stream().map(vm -> vmToMap(vm, isAuthenticated)).toArray());
         out.write(GSON.toJson(response));
     }
     
-    private void handleGetVmById(String idStr, PrintWriter out, HttpServletResponse resp) {
+    private void handleGetVmById(String idStr, PrintWriter out, HttpServletResponse resp, boolean isAuthenticated) {
         try {
             int id = Integer.parseInt(idStr);
             Optional<VmInfo> vm = infrastructureStore.getVmById(id);
             
             if (vm.isPresent()) {
-                out.write(GSON.toJson(vm.get()));
+                // Mask sensitive data for unauthenticated users
+                out.write(GSON.toJson(vmToMap(vm.get(), isAuthenticated)));
             } else {
                 resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
                 out.write(GSON.toJson(error("VM not found: " + id)));
@@ -345,6 +409,34 @@ public class InfraServlet extends HttpServlet {
             resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             out.write(GSON.toJson(error("Invalid VM ID: " + idStr)));
         }
+    }
+    
+    /**
+     * Converts VmInfo to a Map, masking sensitive data for unauthenticated users.
+     */
+    private Map<String, Object> vmToMap(VmInfo vm, boolean includeSensitiveData) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", vm.getId());
+        map.put("vmName", vm.getVmName());
+        map.put("loginUsername", vm.getLoginUsername());
+        
+        // Mask password for unauthenticated users
+        if (includeSensitiveData) {
+            map.put("password", vm.getPassword());
+        } else {
+            // Show masked password if it exists
+            String password = vm.getPassword();
+            if (password != null && !password.isEmpty()) {
+                map.put("password", "********");
+                map.put("hasPassword", true);
+            } else {
+                map.put("password", null);
+                map.put("hasPassword", false);
+            }
+        }
+        
+        map.put("vmStartCredentialPortal", vm.getVmStartCredentialPortal());
+        return map;
     }
     
     private void handleAddVm(JsonObject json, PrintWriter out, HttpServletResponse resp) {
