@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.logdashboard.model.ServerGroup;
 import com.logdashboard.model.ServerInfo;
 import com.logdashboard.model.VmInfo;
 import com.logdashboard.store.InfrastructureStore;
@@ -53,12 +54,27 @@ public class InfraServlet extends HttpServlet {
             // Check if user is authenticated (optional for GET - affects what data is returned)
             boolean isAuthenticated = isAdminAuthenticated(req);
             
-            if (pathInfo.equals("/servers") || pathInfo.equals("/servers/")) {
+            // Server Groups (parent servers)
+            if (pathInfo.equals("/server-groups") || pathInfo.equals("/server-groups/")) {
+                handleGetServerGroups(out);
+            } else if (pathInfo.matches("/server-groups/\\d+/servers/?")) {
+                // Get sub-servers for a group: /server-groups/{groupId}/servers
+                String groupIdStr = pathInfo.replaceAll("/server-groups/(\\d+)/servers/?", "$1");
+                handleGetServersByGroup(groupIdStr, out, resp);
+            } else if (pathInfo.matches("/server-groups/\\d+/?")) {
+                // Get a specific server group
+                String idStr = pathInfo.replaceAll("/server-groups/(\\d+)/?", "$1");
+                handleGetServerGroupById(idStr, out, resp);
+            }
+            // Sub-servers (for direct access)
+            else if (pathInfo.equals("/servers") || pathInfo.equals("/servers/")) {
                 handleGetServers(out);
             } else if (pathInfo.startsWith("/servers/")) {
-                String idStr = pathInfo.substring("/servers/".length());
+                String idStr = pathInfo.substring("/servers/".length()).replaceAll("/$", "");
                 handleGetServerById(idStr, out, resp);
-            } else if (pathInfo.equals("/vms") || pathInfo.equals("/vms/")) {
+            }
+            // VMs
+            else if (pathInfo.equals("/vms") || pathInfo.equals("/vms/")) {
                 handleGetVms(out, isAuthenticated);
             } else if (pathInfo.startsWith("/vms/")) {
                 String idStr = pathInfo.substring("/vms/".length());
@@ -100,7 +116,16 @@ public class InfraServlet extends HttpServlet {
             String body = readRequestBody(req);
             JsonObject json = JsonParser.parseString(body).getAsJsonObject();
             
-            if (pathInfo.equals("/servers") || pathInfo.equals("/servers/")) {
+            // Server Groups
+            if (pathInfo.equals("/server-groups") || pathInfo.equals("/server-groups/")) {
+                handleAddServerGroup(json, out, resp);
+            } else if (pathInfo.matches("/server-groups/\\d+/servers/?")) {
+                // Add sub-server to a group: /server-groups/{groupId}/servers
+                String groupIdStr = pathInfo.replaceAll("/server-groups/(\\d+)/servers/?", "$1");
+                handleAddServerToGroup(groupIdStr, json, out, resp);
+            }
+            // Direct sub-server creation (for backwards compatibility)
+            else if (pathInfo.equals("/servers") || pathInfo.equals("/servers/")) {
                 handleAddServer(json, out, resp);
             } else if (pathInfo.equals("/vms") || pathInfo.equals("/vms/")) {
                 handleAddVm(json, out, resp);
@@ -139,8 +164,14 @@ public class InfraServlet extends HttpServlet {
             String body = readRequestBody(req);
             JsonObject json = JsonParser.parseString(body).getAsJsonObject();
             
-            if (pathInfo.startsWith("/servers/")) {
-                String idStr = pathInfo.substring("/servers/".length());
+            // Server Groups
+            if (pathInfo.matches("/server-groups/\\d+/?")) {
+                String idStr = pathInfo.replaceAll("/server-groups/(\\d+)/?", "$1");
+                handleUpdateServerGroup(idStr, json, out, resp);
+            }
+            // Sub-servers
+            else if (pathInfo.startsWith("/servers/")) {
+                String idStr = pathInfo.substring("/servers/".length()).replaceAll("/$", "");
                 handleUpdateServer(idStr, json, out, resp);
             } else if (pathInfo.startsWith("/vms/")) {
                 String idStr = pathInfo.substring("/vms/".length());
@@ -177,8 +208,14 @@ public class InfraServlet extends HttpServlet {
                 return;
             }
             
-            if (pathInfo.startsWith("/servers/")) {
-                String idStr = pathInfo.substring("/servers/".length());
+            // Server Groups
+            if (pathInfo.matches("/server-groups/\\d+/?")) {
+                String idStr = pathInfo.replaceAll("/server-groups/(\\d+)/?", "$1");
+                handleDeleteServerGroup(idStr, out, resp);
+            }
+            // Sub-servers
+            else if (pathInfo.startsWith("/servers/")) {
+                String idStr = pathInfo.substring("/servers/".length()).replaceAll("/$", "");
                 handleDeleteServer(idStr, out, resp);
             } else if (pathInfo.startsWith("/vms/")) {
                 String idStr = pathInfo.substring("/vms/".length());
@@ -279,13 +316,169 @@ public class InfraServlet extends HttpServlet {
         out.write(GSON.toJson(response));
     }
     
-    // ==================== Server Handlers ====================
+    // ==================== Server Group Handlers ====================
+    
+    private void handleGetServerGroups(PrintWriter out) {
+        List<ServerGroup> groups = infrastructureStore.getAllServerGroups();
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("count", groups.size());
+        response.put("serverGroups", groups);
+        out.write(GSON.toJson(response));
+    }
+    
+    private void handleGetServerGroupById(String idStr, PrintWriter out, HttpServletResponse resp) {
+        try {
+            int id = Integer.parseInt(idStr);
+            Optional<ServerGroup> group = infrastructureStore.getServerGroupById(id);
+            
+            if (group.isPresent()) {
+                out.write(GSON.toJson(group.get()));
+            } else {
+                resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                out.write(GSON.toJson(error("Server group not found: " + id)));
+            }
+        } catch (NumberFormatException e) {
+            resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            out.write(GSON.toJson(error("Invalid server group ID: " + idStr)));
+        }
+    }
+    
+    private void handleGetServersByGroup(String groupIdStr, PrintWriter out, HttpServletResponse resp) {
+        try {
+            int groupId = Integer.parseInt(groupIdStr);
+            List<ServerInfo> servers = infrastructureStore.getServersByGroupId(groupId);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("groupId", groupId);
+            response.put("count", servers.size());
+            response.put("servers", servers);
+            out.write(GSON.toJson(response));
+        } catch (NumberFormatException e) {
+            resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            out.write(GSON.toJson(error("Invalid group ID: " + groupIdStr)));
+        }
+    }
+    
+    private void handleAddServerGroup(JsonObject json, PrintWriter out, HttpServletResponse resp) {
+        try {
+            ServerGroup group = new ServerGroup();
+            group.setServerName(getStringOrDefault(json, "serverName", ""));
+            group.setNote(getStringOrDefault(json, "note", ""));
+            
+            if (group.getServerName().isEmpty()) {
+                resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                out.write(GSON.toJson(error("Server name is required")));
+                return;
+            }
+            
+            ServerGroup created = infrastructureStore.addServerGroup(group);
+            resp.setStatus(HttpServletResponse.SC_CREATED);
+            out.write(GSON.toJson(created));
+        } catch (Exception e) {
+            resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            out.write(GSON.toJson(error("Failed to add server group: " + e.getMessage())));
+        }
+    }
+    
+    private void handleAddServerToGroup(String groupIdStr, JsonObject json, PrintWriter out, HttpServletResponse resp) {
+        try {
+            int groupId = Integer.parseInt(groupIdStr);
+            
+            // Verify the group exists
+            Optional<ServerGroup> group = infrastructureStore.getServerGroupById(groupId);
+            if (!group.isPresent()) {
+                resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                out.write(GSON.toJson(error("Server group not found: " + groupId)));
+                return;
+            }
+            
+            ServerInfo server = new ServerInfo();
+            server.setGroupId(groupId);
+            server.setServerName(getStringOrDefault(json, "serverName", ""));
+            server.setDbType(getStringOrDefault(json, "dbType", ""));
+            server.setPort(getIntOrDefault(json, "port", 0));
+            server.setNote(getStringOrDefault(json, "note", ""));
+            
+            if (server.getServerName().isEmpty()) {
+                resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                out.write(GSON.toJson(error("Server name is required")));
+                return;
+            }
+            
+            ServerInfo created = infrastructureStore.addServer(server);
+            resp.setStatus(HttpServletResponse.SC_CREATED);
+            out.write(GSON.toJson(created));
+        } catch (NumberFormatException e) {
+            resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            out.write(GSON.toJson(error("Invalid group ID: " + groupIdStr)));
+        } catch (Exception e) {
+            resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            out.write(GSON.toJson(error("Failed to add server: " + e.getMessage())));
+        }
+    }
+    
+    private void handleUpdateServerGroup(String idStr, JsonObject json, PrintWriter out, HttpServletResponse resp) {
+        try {
+            int id = Integer.parseInt(idStr);
+            Optional<ServerGroup> existing = infrastructureStore.getServerGroupById(id);
+            
+            if (!existing.isPresent()) {
+                resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                out.write(GSON.toJson(error("Server group not found: " + id)));
+                return;
+            }
+            
+            ServerGroup group = existing.get();
+            if (json.has("serverName")) group.setServerName(json.get("serverName").getAsString());
+            if (json.has("note")) group.setNote(json.get("note").getAsString());
+            
+            boolean updated = infrastructureStore.updateServerGroup(group);
+            if (updated) {
+                out.write(GSON.toJson(group));
+            } else {
+                resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                out.write(GSON.toJson(error("Failed to update server group")));
+            }
+        } catch (NumberFormatException e) {
+            resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            out.write(GSON.toJson(error("Invalid server group ID: " + idStr)));
+        } catch (Exception e) {
+            resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            out.write(GSON.toJson(error("Failed to update server group: " + e.getMessage())));
+        }
+    }
+    
+    private void handleDeleteServerGroup(String idStr, PrintWriter out, HttpServletResponse resp) {
+        try {
+            int id = Integer.parseInt(idStr);
+            boolean deleted = infrastructureStore.deleteServerGroup(id);
+            
+            if (deleted) {
+                out.write(GSON.toJson(success("Server group deleted successfully")));
+            } else {
+                resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                out.write(GSON.toJson(error("Server group not found: " + id)));
+            }
+        } catch (NumberFormatException e) {
+            resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            out.write(GSON.toJson(error("Invalid server group ID: " + idStr)));
+        } catch (Exception e) {
+            resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            out.write(GSON.toJson(error("Failed to delete server group: " + e.getMessage())));
+        }
+    }
+    
+    // ==================== Sub-Server Handlers ====================
     
     private void handleGetServers(PrintWriter out) {
-        List<ServerInfo> servers = infrastructureStore.getAllServers();
+        List<ServerGroup> groups = infrastructureStore.getAllServerGroups();
+        // Flatten all sub-servers
+        List<ServerInfo> allServers = new java.util.ArrayList<>();
+        for (ServerGroup group : groups) {
+            allServers.addAll(group.getSubServers());
+        }
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("count", servers.size());
-        response.put("servers", servers);
+        response.put("count", allServers.size());
+        response.put("servers", allServers);
         out.write(GSON.toJson(response));
     }
     
@@ -308,7 +501,24 @@ public class InfraServlet extends HttpServlet {
     
     private void handleAddServer(JsonObject json, PrintWriter out, HttpServletResponse resp) {
         try {
+            int groupId = getIntOrDefault(json, "groupId", 0);
+            
+            if (groupId == 0) {
+                resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                out.write(GSON.toJson(error("Group ID is required. Use POST /infra/server-groups/{groupId}/servers instead.")));
+                return;
+            }
+            
+            // Verify the group exists
+            Optional<ServerGroup> group = infrastructureStore.getServerGroupById(groupId);
+            if (!group.isPresent()) {
+                resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                out.write(GSON.toJson(error("Server group not found: " + groupId)));
+                return;
+            }
+            
             ServerInfo server = new ServerInfo();
+            server.setGroupId(groupId);
             server.setServerName(getStringOrDefault(json, "serverName", ""));
             server.setDbType(getStringOrDefault(json, "dbType", ""));
             server.setPort(getIntOrDefault(json, "port", 0));
@@ -341,6 +551,17 @@ public class InfraServlet extends HttpServlet {
             }
             
             ServerInfo server = existing.get();
+            if (json.has("groupId")) {
+                int newGroupId = json.get("groupId").getAsInt();
+                // Verify the new group exists
+                Optional<ServerGroup> group = infrastructureStore.getServerGroupById(newGroupId);
+                if (!group.isPresent()) {
+                    resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                    out.write(GSON.toJson(error("Server group not found: " + newGroupId)));
+                    return;
+                }
+                server.setGroupId(newGroupId);
+            }
             if (json.has("serverName")) server.setServerName(json.get("serverName").getAsString());
             if (json.has("dbType")) server.setDbType(json.get("dbType").getAsString());
             if (json.has("port")) server.setPort(json.get("port").getAsInt());
