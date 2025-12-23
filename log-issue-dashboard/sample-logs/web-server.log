@@ -1,0 +1,55 @@
+2025-12-16 06:00:00.000 INFO  [main] Apache Tomcat/9.0.65 starting
+2025-12-16 06:00:05.123 INFO  [main] Server initialized in 5123ms
+2025-12-16 06:00:05.456 INFO  [main] Starting ProtocolHandler ["http-nio-8080"]
+2025-12-16 06:00:05.789 INFO  [main] Starting ProtocolHandler ["https-nio-8443"]
+
+2025-12-16 06:30:12.345 WARN  [http-nio-8080-exec-1] Request processing time exceeded threshold: 5234ms for /api/search
+2025-12-16 06:30:15.678 WARN  [http-nio-8080-exec-1] Large response payload: 15.2MB for /api/export/data
+
+2025-12-16 07:00:45.901 ERROR [http-nio-8443-exec-3] SSL handshake failed
+javax.net.ssl.SSLHandshakeException: Received fatal alert: certificate_unknown
+	at sun.security.ssl.Alert.createSSLException(Alert.java:131)
+	at sun.security.ssl.TransportContext.fatal(TransportContext.java:349)
+	at sun.security.ssl.Alert.createSSLException(Alert.java:117)
+
+2025-12-16 07:15:30.234 ERROR [http-nio-8080-exec-5] Request parsing failed
+org.apache.tomcat.util.http.parser.ParseException: Invalid character found in method name
+	at org.apache.tomcat.util.http.parser.HttpParser.readToken(HttpParser.java:234)
+	at org.apache.coyote.http11.Http11Processor.parseRequestLine(Http11Processor.java:789)
+
+2025-12-16 07:45:00.567 INFO  [session-cleanup] Session timeout cleanup: 156 sessions expired
+2025-12-16 07:45:01.890 WARN  [session-cleanup] Session storage approaching limit: 8500/10000 active sessions
+
+2025-12-16 08:00:12.123 ERROR [http-nio-8080-exec-7] OutOfMemoryError in request handler
+java.lang.OutOfMemoryError: Java heap space
+	at java.util.Arrays.copyOf(Arrays.java:3210)
+	at java.util.ArrayList.grow(ArrayList.java:265)
+	at com.myapp.service.DataProcessor.processLargeDataset(DataProcessor.java:156)
+	at com.myapp.controller.ImportController.handleImport(ImportController.java:78)
+
+2025-12-16 08:15:45.456 WARN  [thread-pool-monitor] Thread pool near capacity: 195/200 active threads
+2025-12-16 08:15:46.789 ERROR [thread-pool-monitor] Thread pool exhausted - rejecting new requests
+java.util.concurrent.RejectedExecutionException: Task rejected from java.util.concurrent.ThreadPoolExecutor
+	at java.util.concurrent.ThreadPoolExecutor$AbortPolicy.rejectedExecution(ThreadPoolExecutor.java:2063)
+	at java.util.concurrent.ThreadPoolExecutor.reject(ThreadPoolExecutor.java:830)
+
+2025-12-16 08:30:00.012 INFO  [http-nio-8080-exec-9] Processing webhook from external service
+2025-12-16 08:30:01.345 ERROR [http-nio-8080-exec-9] Webhook signature verification FAILED
+2025-12-16 08:30:01.567 WARN  [security-monitor] Potential security issue: invalid webhook signature from IP 192.168.1.100
+
+2025-12-16 09:00:30.678 FATAL [main] Server shutdown initiated due to unrecoverable error
+java.lang.RuntimeException: Critical component failed to initialize
+	at com.myapp.core.ComponentRegistry.initializeAll(ComponentRegistry.java:234)
+	at com.myapp.Application.start(Application.java:89)
+	at org.apache.catalina.core.StandardContext.startInternal(StandardContext.java:5135)
+Caused by: java.lang.ClassNotFoundException: com.myapp.plugins.RequiredPlugin
+	at java.net.URLClassLoader.findClass(URLClassLoader.java:382)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:424)
+	... 10 more
+
+2025-12-16 09:30:15.901 ERROR [http-nio-8080-exec-11] 502 Bad Gateway: upstream server unavailable
+2025-12-16 09:30:16.234 ERROR [http-nio-8080-exec-11] FAILURE: Cannot connect to backend service at http://backend:8081/api
+
+2025-12-16 10:00:00.567 INFO  [health-check] System health check completed
+2025-12-16 10:00:00.890 WARN  [health-check] Memory usage warning: 85% of heap used
+2025-12-16 10:00:01.123 WARNING [health-check] CPU usage elevated: 78% average over last 5 minutes

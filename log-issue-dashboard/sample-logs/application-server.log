@@ -1,0 +1,62 @@
+2025-12-16 08:00:01.123 INFO  [main] com.myapp.Application - Application starting...
+2025-12-16 08:00:02.456 INFO  [main] com.myapp.config.ConfigLoader - Loading configuration from /etc/myapp/config.yml
+2025-12-16 08:00:03.789 INFO  [main] com.myapp.database.ConnectionPool - Initializing database connection pool
+2025-12-16 08:00:04.012 WARN  [main] com.myapp.database.ConnectionPool - Connection pool size (5) is below recommended minimum (10)
+2025-12-16 08:00:05.234 INFO  [main] com.myapp.web.WebServer - Starting web server on port 8080
+2025-12-16 08:00:06.567 INFO  [main] com.myapp.Application - Application started successfully
+
+2025-12-16 08:15:32.891 INFO  [http-nio-8080-exec-1] com.myapp.controller.UserController - Processing login request for user: john.doe
+2025-12-16 08:15:33.012 ERROR [http-nio-8080-exec-1] com.myapp.service.AuthService - Authentication failed for user: john.doe - Invalid credentials
+2025-12-16 08:15:33.234 WARN  [http-nio-8080-exec-1] com.myapp.security.LoginAttemptTracker - Failed login attempt #3 for user: john.doe
+
+2025-12-16 08:22:45.678 INFO  [http-nio-8080-exec-3] com.myapp.controller.OrderController - Creating new order for customer: CUST-12345
+2025-12-16 08:22:45.891 ERROR [http-nio-8080-exec-3] com.myapp.service.OrderService - FAILED to create order: Insufficient inventory for product SKU-789
+java.lang.RuntimeException: Insufficient inventory for product SKU-789
+	at com.myapp.service.OrderService.validateInventory(OrderService.java:156)
+	at com.myapp.service.OrderService.createOrder(OrderService.java:89)
+	at com.myapp.controller.OrderController.handleCreateOrder(OrderController.java:45)
+	at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:897)
+	at javax.servlet.http.HttpServlet.service(HttpServlet.java:750)
+
+2025-12-16 08:35:12.345 INFO  [scheduler-1] com.myapp.jobs.DataSyncJob - Starting scheduled data synchronization
+2025-12-16 08:35:15.678 WARNING [scheduler-1] com.myapp.jobs.DataSyncJob - Slow response from external API (2.5s)
+2025-12-16 08:35:18.901 INFO  [scheduler-1] com.myapp.jobs.DataSyncJob - Data synchronization completed: 1523 records processed
+
+2025-12-16 09:01:23.456 ERROR [http-nio-8080-exec-5] com.myapp.controller.PaymentController - Payment processing error
+java.lang.NullPointerException: Cannot invoke method on null payment gateway response
+	at com.myapp.service.PaymentService.processPayment(PaymentService.java:234)
+	at com.myapp.service.PaymentService.handleTransaction(PaymentService.java:178)
+	at com.myapp.controller.PaymentController.submitPayment(PaymentController.java:67)
+	at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:897)
+Caused by: com.myapp.exceptions.GatewayException: Connection timeout to payment gateway
+	at com.myapp.gateway.PaymentGatewayClient.sendRequest(PaymentGatewayClient.java:89)
+	at com.myapp.service.PaymentService.processPayment(PaymentService.java:230)
+	... 5 more
+
+2025-12-16 09:15:45.789 INFO  [http-nio-8080-exec-7] com.myapp.controller.ReportController - Generating monthly sales report
+2025-12-16 09:15:46.012 WARN  [http-nio-8080-exec-7] com.myapp.service.ReportService - Report generation taking longer than expected
+2025-12-16 09:16:12.345 INFO  [http-nio-8080-exec-7] com.myapp.controller.ReportController - Report generated successfully
+
+2025-12-16 09:30:00.123 FATAL [main] com.myapp.database.ConnectionPool - Database connection pool exhausted! No available connections
+java.sql.SQLException: Cannot acquire connection from pool - all connections in use
+	at com.myapp.database.ConnectionPool.getConnection(ConnectionPool.java:145)
+	at com.myapp.repository.BaseRepository.executeQuery(BaseRepository.java:56)
+	at com.myapp.repository.UserRepository.findById(UserRepository.java:34)
+	at com.myapp.service.UserService.getUser(UserService.java:78)
+
+2025-12-16 09:45:23.456 ERROR [http-nio-8080-exec-9] com.myapp.service.FileService - File upload FAILED: Maximum file size exceeded
+2025-12-16 09:45:23.567 WARN  [http-nio-8080-exec-9] com.myapp.controller.FileController - Rejecting file upload from user: admin (size: 52MB, max: 10MB)
+
+2025-12-16 10:00:15.789 INFO  [http-nio-8080-exec-11] com.myapp.controller.ApiController - REST API call: GET /api/v1/products
+2025-12-16 10:00:16.012 ERROR [http-nio-8080-exec-11] com.myapp.service.ProductService - Error: Database query timeout
+java.sql.SQLTimeoutException: Query execution exceeded timeout of 30 seconds
+	at com.myapp.repository.ProductRepository.findAll(ProductRepository.java:67)
+	at com.myapp.service.ProductService.getAllProducts(ProductService.java:45)
+	at com.myapp.controller.ApiController.getProducts(ApiController.java:89)
+	at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+
+2025-12-16 10:15:30.234 INFO  [scheduler-2] com.myapp.jobs.CleanupJob - Starting old session cleanup
+2025-12-16 10:15:32.567 INFO  [scheduler-2] com.myapp.jobs.CleanupJob - Cleaned up 234 expired sessions
+2025-12-16 10:15:32.890 WARNING [scheduler-2] com.myapp.jobs.CleanupJob - Found 12 orphaned session files that could not be deleted

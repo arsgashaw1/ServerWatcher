@@ -1,0 +1,69 @@
+2025-12-16 08:00:00.000 INFO  [user-service] Service starting on port 8081
+2025-12-16 08:00:00.123 INFO  [order-service] Service starting on port 8082
+2025-12-16 08:00:00.234 INFO  [payment-service] Service starting on port 8083
+2025-12-16 08:00:00.345 INFO  [inventory-service] Service starting on port 8084
+2025-12-16 08:00:00.456 INFO  [notification-service] Service starting on port 8085
+
+2025-12-16 08:00:05.567 INFO  [api-gateway] All services registered and healthy
+
+2025-12-16 08:15:30.678 ERROR [order-service] Circuit breaker OPEN for payment-service
+com.netflix.hystrix.exception.HystrixRuntimeException: payment-service timed out and no fallback available
+	at com.netflix.hystrix.AbstractCommand.handleTimeoutViaFallback(AbstractCommand.java:992)
+	at com.myapp.order.PaymentClient.processPayment(PaymentClient.java:67)
+	at com.myapp.order.OrderService.createOrder(OrderService.java:89)
+
+2025-12-16 08:20:00.789 WARN  [payment-service] High latency detected: average response time 2500ms
+2025-12-16 08:20:05.890 WARN  [api-gateway] Routing requests to backup payment processor
+
+2025-12-16 08:30:15.901 ERROR [inventory-service] Kafka consumer error
+org.apache.kafka.common.errors.TimeoutException: Timeout expired while fetching topic metadata
+	at org.apache.kafka.clients.consumer.KafkaConsumer.poll(KafkaConsumer.java:1345)
+	at com.myapp.inventory.InventoryEventConsumer.consume(InventoryEventConsumer.java:78)
+
+2025-12-16 08:35:00.012 WARN  [inventory-service] Kafka connection restored, resuming message processing
+2025-12-16 08:35:05.123 WARN  [inventory-service] Processing backlog: 1500 messages queued
+
+2025-12-16 08:45:30.234 ERROR [user-service] Redis cache connection failed
+io.lettuce.core.RedisConnectionException: Unable to connect to redis:6379
+	at io.lettuce.core.RedisClient.connect(RedisClient.java:207)
+	at com.myapp.user.CacheService.getConnection(CacheService.java:56)
+Caused by: io.netty.channel.ConnectTimeoutException: connection timed out: redis/10.0.0.5:6379
+	at io.netty.channel.nio.AbstractNioChannel.connect(AbstractNioChannel.java:261)
+	... 8 more
+
+2025-12-16 08:50:00.345 WARN  [user-service] Falling back to database for user lookups (cache unavailable)
+2025-12-16 08:50:05.456 WARNING [api-gateway] Increased latency on user endpoints due to cache miss
+
+2025-12-16 09:00:00.567 INFO  [notification-service] Processing notification queue: 500 pending
+2025-12-16 09:00:15.678 ERROR [notification-service] Push notification failed
+com.google.firebase.messaging.FirebaseMessagingException: UNREGISTERED: Requested entity was not found
+	at com.google.firebase.messaging.FirebaseMessaging.send(FirebaseMessaging.java:234)
+	at com.myapp.notification.PushService.sendNotification(PushService.java:89)
+
+2025-12-16 09:15:30.789 FATAL [order-service] Out of memory - initiating graceful shutdown
+java.lang.OutOfMemoryError: Metaspace
+	at java.lang.ClassLoader.defineClass1(Native Method)
+	at java.lang.ClassLoader.defineClass(ClassLoader.java:756)
+	at com.myapp.order.DynamicClassLoader.loadClass(DynamicClassLoader.java:89)
+
+2025-12-16 09:15:35.890 ERROR [api-gateway] order-service health check failed
+2025-12-16 09:15:36.901 WARN  [api-gateway] Removing order-service from load balancer
+2025-12-16 09:15:37.012 INFO  [kubernetes] Detected unhealthy pod: order-service-pod-abc123, restarting...
+
+2025-12-16 09:20:00.123 INFO  [order-service] Service restarted successfully
+2025-12-16 09:20:05.234 INFO  [api-gateway] order-service re-registered and healthy
+
+2025-12-16 09:30:00.345 ERROR [payment-service] Stripe API error
+com.stripe.exception.APIConnectionException: Connection reset by peer
+	at com.stripe.net.HttpURLConnectionClient.request(HttpURLConnectionClient.java:156)
+	at com.myapp.payment.StripeGateway.charge(StripeGateway.java:89)
+
+2025-12-16 09:45:15.456 WARN  [inventory-service] Low stock alert: SKU-12345 has only 5 units remaining
+2025-12-16 09:45:15.567 WARN  [inventory-service] Low stock alert: SKU-67890 has only 3 units remaining
+2025-12-16 09:45:15.678 ERROR [inventory-service] FAILED to update inventory: Optimistic lock exception
+org.hibernate.StaleObjectStateException: Row was updated or deleted by another transaction
+	at org.hibernate.persister.entity.AbstractEntityPersister.check(AbstractEntityPersister.java:2549)
+	at com.myapp.inventory.InventoryRepository.updateStock(InventoryRepository.java:78)
+
+2025-12-16 10:00:00.789 INFO  [api-gateway] Traffic summary: 15,000 requests/minute, 99.2% success rate
+2025-12-16 10:00:00.890 WARN  [api-gateway] Error rate slightly elevated: 0.8% (threshold: 0.5%)

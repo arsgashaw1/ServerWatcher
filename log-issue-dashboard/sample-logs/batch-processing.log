@@ -1,0 +1,67 @@
+2025-12-16 00:00:00.000 INFO  [batch-main] ========== NIGHTLY BATCH PROCESSING STARTED ==========
+2025-12-16 00:00:01.234 INFO  [batch-main] Loading batch configuration from /etc/batch/config.yml
+2025-12-16 00:00:02.567 INFO  [batch-main] Connecting to data warehouse...
+
+2025-12-16 00:05:00.890 INFO  [job-1] Starting Job: CUSTOMER_DATA_SYNC
+2025-12-16 00:05:15.123 INFO  [job-1] Processing 50,000 customer records...
+2025-12-16 00:15:30.456 WARN  [job-1] Slow processing detected: 10,000 records in 10 minutes
+2025-12-16 00:25:45.789 INFO  [job-1] Job CUSTOMER_DATA_SYNC completed: 50,000 records processed, 23 warnings
+
+2025-12-16 00:30:00.012 INFO  [job-2] Starting Job: TRANSACTION_RECONCILIATION
+2025-12-16 00:30:05.345 ERROR [job-2] Data validation failed for batch TX-2025-12-15
+java.lang.IllegalArgumentException: Transaction amount mismatch: expected 15000.00, found 14999.50
+	at com.batch.validators.TransactionValidator.validate(TransactionValidator.java:89)
+	at com.batch.jobs.ReconciliationJob.processBatch(ReconciliationJob.java:156)
+	at com.batch.core.JobExecutor.runJob(JobExecutor.java:78)
+
+2025-12-16 00:45:00.678 INFO  [job-2] Retrying failed batch with manual override...
+2025-12-16 00:45:30.901 WARN  [job-2] WARNING: Proceeding with discrepancy flag set
+2025-12-16 01:00:00.234 INFO  [job-2] Job TRANSACTION_RECONCILIATION completed with warnings
+
+2025-12-16 01:05:00.567 INFO  [job-3] Starting Job: REPORT_GENERATION
+2025-12-16 01:10:15.890 ERROR [job-3] Report generation FAILED
+java.lang.OutOfMemoryError: GC overhead limit exceeded
+	at java.util.HashMap.resize(HashMap.java:704)
+	at java.util.HashMap.putVal(HashMap.java:628)
+	at com.batch.reports.AggregationEngine.aggregate(AggregationEngine.java:234)
+	at com.batch.jobs.ReportJob.generate(ReportJob.java:89)
+
+2025-12-16 01:15:00.123 ERROR [batch-main] Job REPORT_GENERATION failed with unrecoverable error
+2025-12-16 01:15:00.456 WARN  [batch-main] Skipping dependent jobs: REPORT_DISTRIBUTION, REPORT_ARCHIVE
+
+2025-12-16 01:30:00.789 INFO  [job-4] Starting Job: DATA_CLEANUP
+2025-12-16 01:30:05.012 INFO  [job-4] Identifying records older than 90 days...
+2025-12-16 01:35:00.345 INFO  [job-4] Found 125,000 records for cleanup
+2025-12-16 01:45:30.678 WARN  [job-4] Foreign key constraint prevented deletion of 500 records
+2025-12-16 02:00:00.901 INFO  [job-4] Job DATA_CLEANUP completed: 124,500 records deleted, 500 skipped
+
+2025-12-16 02:05:00.234 INFO  [job-5] Starting Job: INDEX_REBUILD
+2025-12-16 02:05:05.567 INFO  [job-5] Rebuilding search indices...
+2025-12-16 02:15:00.890 FATAL [job-5] Index corruption detected!
+java.lang.RuntimeException: Index file corrupted: checksum mismatch
+	at com.search.index.IndexReader.verify(IndexReader.java:156)
+	at com.batch.jobs.IndexJob.rebuild(IndexJob.java:89)
+Caused by: java.io.IOException: CRC check failed: expected 0xABCD1234, found 0xDEADBEEF
+	at com.search.index.IndexFile.read(IndexFile.java:234)
+	... 5 more
+
+2025-12-16 02:20:00.123 ERROR [batch-main] FAILURE: Critical job INDEX_REBUILD failed
+2025-12-16 02:20:00.456 ERROR [batch-main] Sending alert to operations team...
+
+2025-12-16 02:30:00.789 INFO  [job-6] Starting Job: NOTIFICATION_SEND
+2025-12-16 02:30:05.012 INFO  [job-6] Queuing 5,000 email notifications...
+2025-12-16 02:35:00.345 WARN  [job-6] SMTP server responding slowly: 5 second timeout per message
+2025-12-16 02:45:30.678 ERROR [job-6] Email delivery failed for 150 recipients
+javax.mail.SendFailedException: Invalid Addresses
+	at com.sun.mail.smtp.SMTPTransport.rcptTo(SMTPTransport.java:2064)
+	at com.sun.mail.smtp.SMTPTransport.sendMessage(SMTPTransport.java:1286)
+	at com.batch.notification.EmailSender.send(EmailSender.java:89)
+
+2025-12-16 03:00:00.901 INFO  [job-6] Job NOTIFICATION_SEND completed: 4,850 sent, 150 failed
+
+2025-12-16 03:05:00.234 INFO  [batch-main] ========== NIGHTLY BATCH PROCESSING SUMMARY ==========
+2025-12-16 03:05:00.567 INFO  [batch-main] Total Jobs: 6
+2025-12-16 03:05:00.890 INFO  [batch-main] Successful: 4
+2025-12-16 03:05:01.123 ERROR [batch-main] Failed: 2 (REPORT_GENERATION, INDEX_REBUILD)
+2025-12-16 03:05:01.456 WARN  [batch-main] Jobs with warnings: 3
+2025-12-16 03:05:01.789 INFO  [batch-main] ========== BATCH PROCESSING ENDED ==========
