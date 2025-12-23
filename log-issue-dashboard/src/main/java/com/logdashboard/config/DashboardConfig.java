@@ -26,6 +26,10 @@ public class DashboardConfig {
     private String storageType; // "memory" or "h2"
     private String databasePath; // Path to H2 database file (without .mv.db extension)
     
+    // Admin credentials for infrastructure management
+    private String adminUsername;
+    private String adminPassword;
+    
     public DashboardConfig() {
         // Default configuration
         this.watchPaths = new ArrayList<>();
@@ -60,6 +64,8 @@ public class DashboardConfig {
         this.webServerPort = 8080;
         this.storageType = "h2"; // Default to H2 for persistence
         this.databasePath = "data/log-dashboard"; // Default database path
+        this.adminUsername = null; // Must be configured in config file
+        this.adminPassword = null; // Must be configured in config file
     }
 
     public List<String> getWatchPaths() {
@@ -179,6 +185,30 @@ public class DashboardConfig {
      */
     public boolean useH2Storage() {
         return "h2".equalsIgnoreCase(storageType);
+    }
+    
+    public String getAdminUsername() {
+        return adminUsername;
+    }
+    
+    public void setAdminUsername(String adminUsername) {
+        this.adminUsername = adminUsername;
+    }
+    
+    public String getAdminPassword() {
+        return adminPassword;
+    }
+    
+    public void setAdminPassword(String adminPassword) {
+        this.adminPassword = adminPassword;
+    }
+    
+    /**
+     * Returns true if admin credentials are configured.
+     */
+    public boolean hasAdminCredentials() {
+        return adminUsername != null && !adminUsername.isEmpty() 
+            && adminPassword != null && !adminPassword.isEmpty();
     }
 
     @Override

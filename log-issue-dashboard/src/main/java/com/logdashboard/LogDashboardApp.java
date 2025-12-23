@@ -5,6 +5,7 @@ import com.logdashboard.config.ConfigLoader;
 import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.store.DatabaseManager;
 import com.logdashboard.store.H2IssueStore;
+import com.logdashboard.store.InfrastructureStore;
 import com.logdashboard.store.IssueRepository;
 import com.logdashboard.store.IssueStore;
 import com.logdashboard.watcher.ConfigFileWatcher;
@@ -32,6 +33,7 @@ public class LogDashboardApp {
     private static ConfigLoader configLoader;
     private static IssueRepository issueStore;
     private static DatabaseManager databaseManager;
+    private static InfrastructureStore infrastructureStore;
     private static AnalysisService analysisService;
     private static WebServer webServer;
     private static LogFileWatcher logWatcher;
@@ -136,6 +138,17 @@ public class LogDashboardApp {
             try {
                 databaseManager.initialize();
                 issueStore = new H2IssueStore(databaseManager, config.getMaxIssuesDisplayed());
+                
+                // Initialize infrastructure store for server/VM management
+                infrastructureStore = new InfrastructureStore(databaseManager, config);
+                infrastructureStore.initialize();
+                
+                if (config.hasAdminCredentials()) {
+                    System.out.println("Infrastructure management enabled with admin authentication.");
+                } else {
+                    System.out.println("Infrastructure management enabled (read-only mode).");
+                    System.out.println("WARNING: Set 'adminUsername' and 'adminPassword' in config to enable write access.");
+                }
             } catch (SQLException e) {
                 System.err.println("Failed to initialize H2 database: " + e.getMessage());
                 System.err.println("Falling back to in-memory storage.");
@@ -145,10 +158,12 @@ public class LogDashboardApp {
                     databaseManager = null;
                 }
                 issueStore = new IssueStore(config.getMaxIssuesDisplayed());
+                infrastructureStore = null;
             }
         } else {
             System.out.println("Storage: In-memory (data will be lost on restart)");
             issueStore = new IssueStore(config.getMaxIssuesDisplayed());
+            infrastructureStore = null;
         }
         
         // Create the analysis service
@@ -156,6 +171,9 @@ public class LogDashboardApp {
         
         // Create and start the web server
         webServer = new WebServer(port, issueStore, analysisService, config);
+        if (infrastructureStore != null) {
+            webServer.setInfrastructureStore(infrastructureStore);
+        }
         webServer.start();
         
         // Create the log file watcher

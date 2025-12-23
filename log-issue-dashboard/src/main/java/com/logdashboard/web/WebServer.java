@@ -2,6 +2,7 @@ package com.logdashboard.web;
 
 import com.logdashboard.analysis.AnalysisService;
 import com.logdashboard.config.DashboardConfig;
+import com.logdashboard.store.InfrastructureStore;
 import com.logdashboard.store.IssueRepository;
 
 import org.apache.catalina.Context;
@@ -21,6 +22,7 @@ public class WebServer {
     private final IssueRepository issueStore;
     private final AnalysisService analysisService;
     private final DashboardConfig config;
+    private InfrastructureStore infrastructureStore;
     private EventStreamServlet eventStreamServlet;
     
     public WebServer(int port, IssueRepository issueStore, AnalysisService analysisService, DashboardConfig config) {
@@ -29,6 +31,13 @@ public class WebServer {
         this.analysisService = analysisService;
         this.config = config;
         this.tomcat = new Tomcat();
+    }
+    
+    /**
+     * Sets the infrastructure store for server/VM management.
+     */
+    public void setInfrastructureStore(InfrastructureStore infrastructureStore) {
+        this.infrastructureStore = infrastructureStore;
     }
     
     /**
@@ -61,6 +70,13 @@ public class WebServer {
         apiServlet.setEventStreamServlet(eventStreamServlet);
         Tomcat.addServlet(context, "api", apiServlet);
         context.addServletMappingDecoded("/api/*", "api");
+        
+        // Add Infrastructure API servlet for server/VM management
+        if (infrastructureStore != null) {
+            InfraServlet infraServlet = new InfraServlet(infrastructureStore);
+            Tomcat.addServlet(context, "infra", infraServlet);
+            context.addServletMappingDecoded("/infra/*", "infra");
+        }
         
         // Add Static file servlet
         StaticFileServlet staticServlet = new StaticFileServlet("static");
