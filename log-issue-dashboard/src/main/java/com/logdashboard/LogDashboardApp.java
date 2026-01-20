@@ -169,19 +169,22 @@ public class LogDashboardApp {
         // Create the analysis service
         analysisService = new AnalysisService(issueStore);
         
-        // Create and start the web server
-        webServer = new WebServer(port, issueStore, analysisService, config);
-        if (infrastructureStore != null) {
-            webServer.setInfrastructureStore(infrastructureStore);
-        }
-        webServer.start();
-        
         // Create the log file watcher
         logWatcher = new LogFileWatcher(
             config,
             issueStore::addIssue,
             status -> System.out.println("[Watcher] " + status)
         );
+        
+        // Create and start the web server
+        webServer = new WebServer(port, issueStore, analysisService, config);
+        if (infrastructureStore != null) {
+            webServer.setInfrastructureStore(infrastructureStore);
+        }
+        // Pass ConfigLoader and LogFileWatcher for configuration management
+        webServer.setConfigLoader(configLoader);
+        webServer.setLogFileWatcher(logWatcher);
+        webServer.start();
         
         // Create the config file watcher
         configWatcher = new ConfigFileWatcher(
