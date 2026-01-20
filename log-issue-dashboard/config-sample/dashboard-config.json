@@ -58,6 +58,33 @@
     ".*completed successfully.*",
     ".*0 errors.*0 warnings.*"
   ],
+  "_exclusion_comment": "Patterns to filter out false positives (successful operations that contain error-like text)",
+  
+  "criticalPatterns": [],
+  "_criticalPatterns_comment": "Additional patterns for CRITICAL severity. Built-in patterns detect: OutOfMemory, deadlocks, system crashes, security breaches. Leave empty to use only built-in patterns.",
+  
+  "customRules": [
+    {
+      "_comment": "Example custom rule - uncomment to use",
+      "_name": "SlowQuery",
+      "_pattern": ".*query took (\\d+)ms.*",
+      "_severity": "WARNING",
+      "_issueType": "SlowQuery",
+      "_extractGroup": 1
+    }
+  ],
+  "_customRules_comment": "Define custom detection rules with pattern, severity (CRITICAL/EXCEPTION/ERROR/WARNING), issueType, and optional extractGroup for message extraction.",
+  
+  "contextLinesBefore": 2,
+  "contextLinesAfter": 5,
+  "_context_comment": "Number of log lines to capture before/after detected issues for better context",
+  
+  "enableDeduplication": true,
+  "_dedup_comment": "When enabled, similar issues within 5 seconds are deduplicated to prevent flooding",
+  
+  "parseJsonLogs": true,
+  "_json_comment": "When enabled, automatically parses JSON-formatted log lines and extracts level, message, and stacktrace fields",
+  
   "pollingIntervalSeconds": 2,
   "maxIssuesDisplayed": 500,
   "enableSound": false,
@@ -69,5 +96,5 @@
   
   "adminUsername": "admin",
   "adminPassword": "ChangeThisPassword!",
-  "_admin_comment": "Admin credentials for infrastructure management (Servers/VMs). Change these to secure values before deployment."
+  "_admin_comment": "Admin credentials for infrastructure management (Servers/VMs) and configuration changes. Change these to secure values before deployment."
 }
