@@ -86,7 +86,8 @@
   "_json_comment": "When enabled, automatically parses JSON-formatted log lines and extracts level, message, and stacktrace fields",
   
   "pollingIntervalSeconds": 2,
-  "maxIssuesDisplayed": 500,
+  "maxIssuesDisplayed": 0,
+  "_maxIssuesDisplayed_comment": "Set to 0 for unlimited issues. Set a positive number to limit memory usage.",
   "enableSound": false,
   "windowTitle": "Sentinel",
   "webServerPort": 8080,

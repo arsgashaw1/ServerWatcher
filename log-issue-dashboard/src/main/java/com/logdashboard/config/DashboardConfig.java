@@ -70,7 +70,7 @@ public class DashboardConfig {
         this.criticalPatterns = new ArrayList<>(); // Uses built-in patterns if empty
         this.customRules = new ArrayList<>();
         this.pollingIntervalSeconds = 2;
-        this.maxIssuesDisplayed = 500;
+        this.maxIssuesDisplayed = Integer.MAX_VALUE; // No limit
         this.enableSound = false;
         this.windowTitle = "Log Issue Dashboard";
         this.webServerPort = 8080;

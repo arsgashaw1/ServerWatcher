@@ -37,7 +37,8 @@ public class H2IssueStore implements IssueRepository {
      */
     public H2IssueStore(DatabaseManager dbManager, int maxIssues) {
         this.dbManager = dbManager;
-        this.maxIssues = Math.min(maxIssues, 100000); // Higher limit since we use disk
+        // 0 or negative means unlimited
+        this.maxIssues = (maxIssues <= 0) ? Integer.MAX_VALUE : maxIssues;
         this.listeners = new CopyOnWriteArrayList<>();
         this.totalIssuesCount = new AtomicLong(0);
         this.severityCounts = new ConcurrentHashMap<>();
@@ -159,8 +160,14 @@ public class H2IssueStore implements IssueRepository {
     /**
      * Trims old issues when max limit is exceeded.
      * Also refreshes cached counters to stay in sync with database.
+     * Skips trimming if maxIssues is set to unlimited (Integer.MAX_VALUE).
      */
     private void trimOldIssues(Connection conn) throws SQLException {
+        // Skip trimming if unlimited
+        if (maxIssues >= Integer.MAX_VALUE) {
+            return;
+        }
+        
         int currentCount = getCurrentIssuesCount();
         if (currentCount > maxIssues) {
             int toDelete = currentCount - maxIssues;
@@ -244,7 +251,7 @@ public class H2IssueStore implements IssueRepository {
      */
     @Override
     public List<LogIssue> getAllIssues() {
-        return getIssues(0, maxIssues);
+        return getIssues(0, Integer.MAX_VALUE);
     }
     
     /**
