@@ -139,13 +139,6 @@ public class ConfigApiServlet extends HttpServlet {
         PrintWriter out = resp.getWriter();
         
         try {
-            // Check admin authentication
-            if (!isAuthenticated(req)) {
-                resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                out.write(GSON.toJson(error("Authentication required. Please provide admin credentials.")));
-                return;
-            }
-            
             switch (pathInfo) {
                 case "/servers/add":
                 case "/watch-directories/add":
@@ -181,13 +174,6 @@ public class ConfigApiServlet extends HttpServlet {
         PrintWriter out = resp.getWriter();
         
         try {
-            // Check admin authentication
-            if (!isAuthenticated(req)) {
-                resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                out.write(GSON.toJson(error("Authentication required. Please provide admin credentials.")));
-                return;
-            }
-            
             if (pathInfo.startsWith("/servers/") || pathInfo.startsWith("/watch-directories/")) {
                 String serverName = pathInfo.replace("/servers/", "").replace("/watch-directories/", "");
                 handleRemoveWatchDirectory(serverName, out, resp);

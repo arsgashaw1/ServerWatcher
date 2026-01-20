@@ -542,31 +542,16 @@ class ConfigManager {
             useIconv: document.getElementById('useIconvCheck').checked
         };
         
-        // Check if auth is required
-        if (this.requiresAuth && !this.authCredentials) {
-            this.pendingAction = () => this.saveDirectoryWithAuth(data);
-            this.showAuthModal();
-            return;
-        }
-        
         await this.saveDirectoryWithAuth(data);
     }
     
     async saveDirectoryWithAuth(data) {
         try {
-            const headers = {
-                'Content-Type': 'application/json'
-            };
-            
-            if (this.authCredentials) {
-                headers['Authorization'] = 'Basic ' + btoa(
-                    this.authCredentials.username + ':' + this.authCredentials.password
-                );
-            }
-            
             const response = await fetch('/config/watch-directories/add', {
                 method: 'POST',
-                headers: headers,
+                headers: {
+                    'Content-Type': 'application/json'
+                },
                 body: JSON.stringify(data)
             });
             
@@ -578,14 +563,7 @@ class ConfigManager {
                 this.loadStatus();
                 this.showNotification('Watch directory added successfully', 'success');
             } else {
-                if (response.status === 401) {
-                    this.authCredentials = null;
-                    this.updateAuthStatus();
-                    this.pendingAction = () => this.saveDirectoryWithAuth(data);
-                    this.showAuthModal();
-                } else {
-                    alert('Error: ' + (result.error || 'Failed to add directory'));
-                }
+                alert('Error: ' + (result.error || 'Failed to add directory'));
             }
         } catch (error) {
             console.error('Error saving directory:', error);
@@ -685,30 +663,16 @@ class ConfigManager {
             return;
         }
         
-        if (this.requiresAuth && !this.authCredentials) {
-            this.pendingAction = () => this.savePatternWithAuth(pattern);
-            this.showAuthModal();
-            return;
-        }
-        
         await this.savePatternWithAuth(pattern);
     }
     
     async savePatternWithAuth(pattern) {
         try {
-            const headers = {
-                'Content-Type': 'application/json'
-            };
-            
-            if (this.authCredentials) {
-                headers['Authorization'] = 'Basic ' + btoa(
-                    this.authCredentials.username + ':' + this.authCredentials.password
-                );
-            }
-            
             const response = await fetch('/config/file-patterns/add', {
                 method: 'POST',
-                headers: headers,
+                headers: {
+                    'Content-Type': 'application/json'
+                },
                 body: JSON.stringify({ pattern })
             });
             
@@ -719,14 +683,7 @@ class ConfigManager {
                 this.loadPatterns();
                 this.showNotification('File pattern added', 'success');
             } else {
-                if (response.status === 401) {
-                    this.authCredentials = null;
-                    this.updateAuthStatus();
-                    this.pendingAction = () => this.savePatternWithAuth(pattern);
-                    this.showAuthModal();
-                } else {
-                    alert('Error: ' + (result.error || 'Failed to add pattern'));
-                }
+                alert('Error: ' + (result.error || 'Failed to add pattern'));
             }
         } catch (error) {
             console.error('Error saving pattern:', error);
@@ -759,13 +716,6 @@ class ConfigManager {
     
     async confirmDelete() {
         if (this.pendingDeleteAction) {
-            if (this.requiresAuth && !this.authCredentials) {
-                this.pendingAction = this.pendingDeleteAction;
-                this.closeConfirmModal();
-                this.showAuthModal();
-                return;
-            }
-            
             await this.pendingDeleteAction();
             this.closeConfirmModal();
         }
@@ -773,16 +723,9 @@ class ConfigManager {
     
     async removeDirectory(serverName) {
         try {
-            const headers = {};
-            if (this.authCredentials) {
-                headers['Authorization'] = 'Basic ' + btoa(
-                    this.authCredentials.username + ':' + this.authCredentials.password
-                );
-            }
-            
             const response = await fetch(
                 `/config/watch-directories/${encodeURIComponent(serverName)}`,
-                { method: 'DELETE', headers }
+                { method: 'DELETE' }
             );
             
             const result = await response.json();
@@ -792,14 +735,7 @@ class ConfigManager {
                 this.loadStatus();
                 this.showNotification('Watch directory removed', 'success');
             } else {
-                if (response.status === 401) {
-                    this.authCredentials = null;
-                    this.updateAuthStatus();
-                    this.pendingAction = () => this.removeDirectory(serverName);
-                    this.showAuthModal();
-                } else {
-                    alert('Error: ' + (result.error || 'Failed to remove directory'));
-                }
+                alert('Error: ' + (result.error || 'Failed to remove directory'));
             }
         } catch (error) {
             console.error('Error removing directory:', error);
@@ -809,16 +745,9 @@ class ConfigManager {
     
     async removePattern(pattern) {
         try {
-            const headers = {};
-            if (this.authCredentials) {
-                headers['Authorization'] = 'Basic ' + btoa(
-                    this.authCredentials.username + ':' + this.authCredentials.password
-                );
-            }
-            
             const response = await fetch(
                 `/config/file-patterns/${encodeURIComponent(pattern)}`,
-                { method: 'DELETE', headers }
+                { method: 'DELETE' }
             );
             
             const result = await response.json();
@@ -827,14 +756,7 @@ class ConfigManager {
                 this.loadPatterns();
                 this.showNotification('File pattern removed', 'success');
             } else {
-                if (response.status === 401) {
-                    this.authCredentials = null;
-                    this.updateAuthStatus();
-                    this.pendingAction = () => this.removePattern(pattern);
-                    this.showAuthModal();
-                } else {
-                    alert('Error: ' + (result.error || 'Failed to remove pattern'));
-                }
+                alert('Error: ' + (result.error || 'Failed to remove pattern'));
             }
         } catch (error) {
             console.error('Error removing pattern:', error);
