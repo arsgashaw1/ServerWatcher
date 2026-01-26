@@ -41,8 +41,9 @@ public class DumpProcessingWatcher {
     private final int pollingIntervalSeconds;
     private volatile boolean running;
     
-    // Track files currently being processed to avoid duplicate processing
-    private final Set<String> processingFiles;
+    // Track configs currently being processed to avoid duplicate processing
+    // Since the script processes the entire dump folder, we track by config ID
+    private final Set<Integer> processingConfigs;
     
     /**
      * Creates a new DumpProcessingWatcher with default settings.
@@ -62,7 +63,7 @@ public class DumpProcessingWatcher {
             pollingIntervalSeconds : DEFAULT_POLLING_INTERVAL_SECONDS;
         
         this.executor = new DumpScriptExecutor();
-        this.processingFiles = ConcurrentHashMap.newKeySet();
+        this.processingConfigs = ConcurrentHashMap.newKeySet();
         
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "DumpProcessingWatcher-Scheduler");
@@ -207,88 +208,129 @@ public class DumpProcessingWatcher {
     
     /**
      * Processes files that are ready (exceeded threshold).
+     * The script processes the entire dump folder, so we process once per config
+     * when any file is ready, not per file.
      */
     private void processReadyFiles(DumpProcessConfig config) {
-        List<DumpFileTracking> pendingFiles = store.getPendingFiles(config.getId());
+        // Use atomic add to prevent race conditions - returns false if already present
+        if (!processingConfigs.add(config.getId())) {
+            // Config is already being processed
+            return;
+        }
         
-        for (DumpFileTracking file : pendingFiles) {
-            // Check if file has exceeded threshold
-            if (!file.isReadyForProcessing(config.getThresholdMinutes())) {
-                continue;
-            }
+        try {
+            List<DumpFileTracking> pendingFiles = store.getPendingFiles(config.getId());
             
-            // Check if we're already processing this file
-            if (processingFiles.contains(file.getFilePath())) {
-                continue;
-            }
-            
-            // Check if file still exists
-            File mdbFile = new File(file.getFilePath());
-            if (!mdbFile.exists()) {
-                // File was removed - mark as completed (manually processed or deleted)
-                try {
-                    store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_COMPLETED, 
-                        "File no longer exists (manually processed or deleted)");
-                } catch (SQLException e) {
-                    System.err.println("Error updating file status: " + e.getMessage());
+            // Find files that are ready for processing
+            List<DumpFileTracking> readyFiles = new java.util.ArrayList<>();
+            for (DumpFileTracking file : pendingFiles) {
+                // Check if file still exists
+                File mdbFile = new File(file.getFilePath());
+                if (!mdbFile.exists()) {
+                    // File was removed - mark as completed (manually processed or deleted)
+                    try {
+                        store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_COMPLETED, 
+                            "File no longer exists (manually processed or deleted)");
+                    } catch (SQLException e) {
+                        System.err.println("Error updating file status: " + e.getMessage());
+                    }
+                    continue;
                 }
-                continue;
+                
+                // Check if file has exceeded threshold
+                if (file.isReadyForProcessing(config.getThresholdMinutes())) {
+                    readyFiles.add(file);
+                }
             }
             
-            // Submit for processing
-            processingFiles.add(file.getFilePath());
-            processingExecutor.submit(() -> processFile(config, file));
+            if (readyFiles.isEmpty()) {
+                // No files ready, remove from processing set
+                processingConfigs.remove(config.getId());
+                return;
+            }
+            
+            // Submit config for processing - all ready files will be processed together
+            processingExecutor.submit(() -> processConfig(config, readyFiles));
+            
+        } catch (Exception e) {
+            // On error, remove from processing set
+            processingConfigs.remove(config.getId());
+            throw e;
         }
     }
     
     /**
-     * Processes a single .mdb file.
+     * Processes all ready files for a config.
+     * The script processes the entire dump folder, so all ready files
+     * are marked together based on the script result.
      */
-    private void processFile(DumpProcessConfig config, DumpFileTracking file) {
+    private void processConfig(DumpProcessConfig config, List<DumpFileTracking> files) {
         try {
-            updateStatus("Processing: " + file.getFileName() + " [" + config.getServerName() + "]");
+            String fileNames = files.stream()
+                .map(DumpFileTracking::getFileName)
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("unknown");
+            updateStatus("Processing " + files.size() + " file(s): " + fileNames + " [" + config.getServerName() + "]");
             
-            // Update status to PROCESSING
-            store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_PROCESSING, null);
+            // Update status to PROCESSING for all files
+            for (DumpFileTracking file : files) {
+                try {
+                    store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_PROCESSING, null);
+                } catch (SQLException e) {
+                    System.err.println("Error updating file status: " + e.getMessage());
+                }
+            }
             
-            // Execute the script
+            // Execute the script once for the entire dump folder
             DumpScriptExecutor.ExecutionResult result = executor.execute(config);
             
             // Update config with last run info
             store.updateLastRunStatus(config.getId(), result.getStatusString(), result.getOutput());
             
             if (result.isSuccess()) {
-                // Success
-                store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_COMPLETED, result.getOutput());
-                updateStatus("Completed: " + file.getFileName() + " [" + config.getServerName() + 
+                // Success - mark all files as completed
+                for (DumpFileTracking file : files) {
+                    try {
+                        store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_COMPLETED, result.getOutput());
+                    } catch (SQLException e) {
+                        System.err.println("Error updating file status: " + e.getMessage());
+                    }
+                }
+                updateStatus("Completed: " + files.size() + " file(s) [" + config.getServerName() + 
                     "] (exit code: " + result.getExitCode() + ", duration: " + 
                     result.getDurationMillis() / 1000 + "s)");
             } else {
-                // Failed
-                store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_FAILED, result.getOutput());
-                updateStatus("Failed: " + file.getFileName() + " [" + config.getServerName() + 
-                    "] - " + (result.isTimedOut() ? "TIMEOUT" : "exit code: " + result.getExitCode()));
-                
-                // Check if we should retry
-                if (file.canRetry(MAX_RETRIES)) {
-                    store.incrementRetryCount(file.getId());
-                    updateStatus("Will retry: " + file.getFileName() + " (attempt " + 
-                        (file.getRetryCount() + 1) + "/" + MAX_RETRIES + ")");
+                // Failed - mark all files as failed, handle retries
+                for (DumpFileTracking file : files) {
+                    try {
+                        store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_FAILED, result.getOutput());
+                        
+                        // Check if we should retry
+                        if (file.canRetry(MAX_RETRIES)) {
+                            store.incrementRetryCount(file.getId());
+                        }
+                    } catch (SQLException e) {
+                        System.err.println("Error updating file status: " + e.getMessage());
+                    }
                 }
+                updateStatus("Failed: " + files.size() + " file(s) [" + config.getServerName() + 
+                    "] - " + (result.isTimedOut() ? "TIMEOUT" : "exit code: " + result.getExitCode()));
             }
             
         } catch (SQLException e) {
-            System.err.println("Database error processing file " + file.getFileName() + ": " + e.getMessage());
+            System.err.println("Database error processing config " + config.getServerName() + ": " + e.getMessage());
         } catch (Exception e) {
-            System.err.println("Error processing file " + file.getFileName() + ": " + e.getMessage());
-            try {
-                store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_FAILED, 
-                    "Exception: " + e.getMessage());
-            } catch (SQLException ex) {
-                System.err.println("Error updating file status: " + ex.getMessage());
+            System.err.println("Error processing config " + config.getServerName() + ": " + e.getMessage());
+            for (DumpFileTracking file : files) {
+                try {
+                    store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_FAILED, 
+                        "Exception: " + e.getMessage());
+                } catch (SQLException ex) {
+                    System.err.println("Error updating file status: " + ex.getMessage());
+                }
             }
         } finally {
-            processingFiles.remove(file.getFilePath());
+            processingConfigs.remove(config.getId());
         }
     }
     
@@ -303,28 +345,51 @@ public class DumpProcessingWatcher {
                 return;
             }
             
-            // Scan for new files first
-            scanDumpFolder(config);
-            
-            // Get all pending files (ignore threshold)
-            List<DumpFileTracking> pendingFiles = store.getPendingFiles(configId);
-            
-            if (pendingFiles.isEmpty()) {
-                updateStatus("No pending files for " + config.getServerName());
+            // Use atomic add to prevent race conditions - returns false if already present
+            if (!processingConfigs.add(configId)) {
+                updateStatus("Config " + config.getServerName() + " is already being processed");
                 return;
             }
             
-            updateStatus("Manual trigger: processing " + pendingFiles.size() + 
-                " file(s) for " + config.getServerName());
-            
-            for (DumpFileTracking file : pendingFiles) {
-                if (!processingFiles.contains(file.getFilePath())) {
+            try {
+                // Scan for new files first
+                scanDumpFolder(config);
+                
+                // Get all pending files (ignore threshold)
+                List<DumpFileTracking> pendingFiles = store.getPendingFiles(configId);
+                
+                // Filter to files that still exist
+                List<DumpFileTracking> existingFiles = new java.util.ArrayList<>();
+                for (DumpFileTracking file : pendingFiles) {
                     File mdbFile = new File(file.getFilePath());
                     if (mdbFile.exists()) {
-                        processingFiles.add(file.getFilePath());
-                        processingExecutor.submit(() -> processFile(config, file));
+                        existingFiles.add(file);
+                    } else {
+                        try {
+                            store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_COMPLETED, 
+                                "File no longer exists (manually processed or deleted)");
+                        } catch (SQLException e) {
+                            System.err.println("Error updating file status: " + e.getMessage());
+                        }
                     }
                 }
+                
+                if (existingFiles.isEmpty()) {
+                    updateStatus("No pending files for " + config.getServerName());
+                    processingConfigs.remove(configId);
+                    return;
+                }
+                
+                updateStatus("Manual trigger: processing " + existingFiles.size() + 
+                    " file(s) for " + config.getServerName());
+                
+                // Submit for processing - all files processed together
+                processingExecutor.submit(() -> processConfig(config, existingFiles));
+                
+            } catch (Exception e) {
+                // On error, remove from processing set
+                processingConfigs.remove(configId);
+                throw e;
             }
         });
     }
@@ -351,10 +416,10 @@ public class DumpProcessingWatcher {
     }
     
     /**
-     * Returns the number of files currently being processed.
+     * Returns the number of configs currently being processed.
      */
     public int getProcessingCount() {
-        return processingFiles.size();
+        return processingConfigs.size();
     }
     
     private void updateStatus(String status) {

@@ -19,7 +19,8 @@ public class DumpScriptExecutor {
     private static final long DEFAULT_TIMEOUT_MINUTES = 30;
     
     // Pattern to detect potentially dangerous characters in paths
-    private static final Pattern DANGEROUS_CHARS = Pattern.compile("[;&|`$(){}\\[\\]<>]");
+    // Includes newline characters to prevent command injection via newlines
+    private static final Pattern DANGEROUS_CHARS = Pattern.compile("[;&|`$(){}\\[\\]<>\\n\\r\\0]");
     
     private final long timeoutMinutes;
     
@@ -53,6 +54,7 @@ public class DumpScriptExecutor {
                 "Script not found: " + scriptFile.getAbsolutePath(), 0, false);
         }
         
+        Process process = null;
         try {
             ProcessBuilder processBuilder;
             
@@ -75,7 +77,7 @@ public class DumpScriptExecutor {
             processBuilder.directory(new File(config.getDbFolder()));
             
             // Start the process
-            Process process = processBuilder.start();
+            process = processBuilder.start();
             
             // Read output
             StringBuilder output = new StringBuilder();
@@ -108,10 +110,18 @@ public class DumpScriptExecutor {
             
         } catch (IOException e) {
             long duration = System.currentTimeMillis() - startTime;
+            // Ensure process is destroyed on exception
+            if (process != null) {
+                process.destroyForcibly();
+            }
             return new ExecutionResult(-1, "IO Error: " + e.getMessage(), duration, false);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             long duration = System.currentTimeMillis() - startTime;
+            // Ensure process is destroyed on exception
+            if (process != null) {
+                process.destroyForcibly();
+            }
             return new ExecutionResult(-1, "Interrupted: " + e.getMessage(), duration, false);
         }
     }
