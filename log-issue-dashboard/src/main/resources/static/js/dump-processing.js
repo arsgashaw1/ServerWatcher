@@ -496,9 +496,12 @@ function renderFiles(files) {
     
     filesTableBody.innerHTML = files.map(file => {
         // Calculate process duration if available
+        // Note: processStartTime and processEndTime are ISO timestamp strings from the backend
         let processTimeHtml = '--';
         if (file.processStartTime && file.processEndTime) {
-            const durationMs = file.processEndTime - file.processStartTime;
+            const startTime = new Date(file.processStartTime).getTime();
+            const endTime = new Date(file.processEndTime).getTime();
+            const durationMs = endTime - startTime;
             const durationSec = Math.round(durationMs / 1000);
             const statusClass = file.status === 'COMPLETED' ? 'success' : (file.status === 'FAILED' ? 'failed' : '');
             processTimeHtml = `<span class="process-time ${statusClass}">${formatDuration(durationSec)}</span>`;

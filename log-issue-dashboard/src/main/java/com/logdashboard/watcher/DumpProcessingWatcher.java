@@ -92,6 +92,9 @@ public class DumpProcessingWatcher {
         
         updateStatus("Starting dump processing watcher...");
         
+        // Recover files stuck in PROCESSING status from previous server run
+        recoverStuckFiles();
+        
         // Schedule periodic polling
         scheduler.scheduleAtFixedRate(
             this::pollDumpFolders,
@@ -109,6 +112,21 @@ public class DumpProcessingWatcher {
         );
         
         updateStatus("Dump processing watcher started (polling every " + pollingIntervalSeconds + "s)");
+    }
+    
+    /**
+     * Recovers files that were stuck in PROCESSING status when the server was restarted.
+     * Resets them to PENDING so they can be retried.
+     */
+    private void recoverStuckFiles() {
+        try {
+            int recovered = store.resetStuckProcessingFiles();
+            if (recovered > 0) {
+                updateStatus("Recovered " + recovered + " file(s) stuck in PROCESSING status from previous run");
+            }
+        } catch (SQLException e) {
+            System.err.println("Error recovering stuck files: " + e.getMessage());
+        }
     }
     
     /**
@@ -355,10 +373,15 @@ public class DumpProcessingWatcher {
         } catch (SQLException e) {
             System.err.println("Database error processing config " + config.getServerName() + ": " + e.getMessage());
             // Mark files as FAILED to prevent them from being stuck in PROCESSING forever
+            // Also handle retries for transient database errors
             for (DumpFileTracking file : files) {
                 try {
                     store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_FAILED, 
                         "Database error: " + e.getMessage());
+                    // Handle retries for exception failures too
+                    if (file.getRetryCount() < MAX_RETRIES) {
+                        store.incrementRetryCount(file.getId());
+                    }
                 } catch (SQLException ex) {
                     System.err.println("Error updating file status: " + ex.getMessage());
                 }
@@ -369,6 +392,10 @@ public class DumpProcessingWatcher {
                 try {
                     store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_FAILED, 
                         "Exception: " + e.getMessage());
+                    // Handle retries for exception failures too
+                    if (file.getRetryCount() < MAX_RETRIES) {
+                        store.incrementRetryCount(file.getId());
+                    }
                 } catch (SQLException ex) {
                     System.err.println("Error updating file status: " + ex.getMessage());
                 }

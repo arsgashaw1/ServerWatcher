@@ -408,6 +408,20 @@ public class DumpProcessingStore {
     }
     
     /**
+     * Resets files stuck in PROCESSING status back to PENDING.
+     * This is called on startup to recover from server crashes/restarts.
+     */
+    public int resetStuckProcessingFiles() throws SQLException {
+        String sql = "UPDATE dump_file_tracking SET status = 'PENDING', " +
+                     "process_output = CONCAT(COALESCE(process_output, ''), '\n[Server restart - reset to PENDING]') " +
+                     "WHERE status = 'PROCESSING'";
+        
+        try (PreparedStatement stmt = databaseManager.getConnection().prepareStatement(sql)) {
+            return stmt.executeUpdate();
+        }
+    }
+    
+    /**
      * Gets processing statistics for a config.
      */
     public ProcessingStats getStatsForConfig(int configId) {
