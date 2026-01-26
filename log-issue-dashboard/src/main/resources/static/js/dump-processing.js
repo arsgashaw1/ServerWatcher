@@ -5,6 +5,8 @@ let isAdmin = true; // Admin is always enabled for dump processing
 let configs = [];
 let selectedConfigId = null;
 let deleteConfigId = null;
+let currentFiles = []; // Store current files for filtering
+let currentFilter = 'ALL'; // Current filter status
 
 // DOM Elements
 const configTableBody = document.getElementById('configTableBody');
@@ -128,6 +130,18 @@ function setupEventListeners() {
     closeFilesBtn.addEventListener('click', () => {
         filesSection.style.display = 'none';
         selectedConfigId = null;
+        currentFiles = [];
+        currentFilter = 'ALL';
+    });
+    
+    // File filter tabs
+    document.querySelectorAll('.filter-tab').forEach(tab => {
+        tab.addEventListener('click', () => setFileFilter(tab.dataset.filter));
+    });
+    
+    // File status cards (also work as filters)
+    document.querySelectorAll('.file-status-card').forEach(card => {
+        card.addEventListener('click', () => setFileFilter(card.dataset.filter));
     });
     
     // Command preview updates
@@ -182,12 +196,56 @@ async function loadFilesForConfig(configId) {
         const response = await fetch(`/dump/configs/${configId}/files`);
         const data = await response.json();
         selectedConfigName.textContent = data.serverName;
-        renderFiles(data.files || []);
+        currentFiles = data.files || [];
+        currentFilter = 'ALL';
+        updateFileStatusCounts();
+        renderFiles(filterFiles(currentFiles, currentFilter));
+        updateFilterTabs();
         filesSection.style.display = 'block';
         selectedConfigId = configId;
     } catch (error) {
         console.error('Error loading files:', error);
     }
+}
+
+function updateFileStatusCounts() {
+    const counts = {
+        PENDING: 0,
+        PROCESSING: 0,
+        COMPLETED: 0,
+        FAILED: 0
+    };
+    
+    currentFiles.forEach(file => {
+        if (counts.hasOwnProperty(file.status)) {
+            counts[file.status]++;
+        }
+    });
+    
+    document.getElementById('filePendingCount').textContent = counts.PENDING;
+    document.getElementById('fileProcessingCount').textContent = counts.PROCESSING;
+    document.getElementById('fileCompletedCount').textContent = counts.COMPLETED;
+    document.getElementById('fileFailedCount').textContent = counts.FAILED;
+}
+
+function filterFiles(files, status) {
+    if (status === 'ALL') return files;
+    return files.filter(f => f.status === status);
+}
+
+function updateFilterTabs() {
+    document.querySelectorAll('.filter-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.filter === currentFilter);
+    });
+    document.querySelectorAll('.file-status-card').forEach(card => {
+        card.classList.toggle('active', card.dataset.filter === currentFilter);
+    });
+}
+
+function setFileFilter(status) {
+    currentFilter = status;
+    updateFilterTabs();
+    renderFiles(filterFiles(currentFiles, currentFilter));
 }
 
 async function validateCredentials() {
@@ -415,10 +473,13 @@ function renderConfigs() {
 
 function renderFiles(files) {
     if (!files || files.length === 0) {
+        const emptyMessage = currentFilter === 'ALL' 
+            ? 'No files tracked for this configuration'
+            : `No ${currentFilter.toLowerCase()} files`;
         filesTableBody.innerHTML = `
             <tr>
-                <td colspan="6" style="text-align: center; padding: 2rem;">
-                    No files tracked for this configuration
+                <td colspan="8" style="text-align: center; padding: 2rem;">
+                    ${emptyMessage}
                 </td>
             </tr>
         `;
@@ -433,17 +494,48 @@ function renderFiles(files) {
         }
     });
     
-    filesTableBody.innerHTML = files.map(file => `
-        <tr>
-            <td>${escapeHtml(file.fileName)}</td>
+    filesTableBody.innerHTML = files.map(file => {
+        // Calculate process duration if available
+        let processTimeHtml = '--';
+        if (file.processStartTime && file.processEndTime) {
+            const durationMs = file.processEndTime - file.processStartTime;
+            const durationSec = Math.round(durationMs / 1000);
+            const statusClass = file.status === 'COMPLETED' ? 'success' : (file.status === 'FAILED' ? 'failed' : '');
+            processTimeHtml = `<span class="process-time ${statusClass}">${formatDuration(durationSec)}</span>`;
+        } else if (file.processStartTime && file.status === 'PROCESSING') {
+            processTimeHtml = '<span class="process-time">In progress...</span>';
+        }
+        
+        // Status icon for better visibility
+        const statusIcons = {
+            'PENDING': '⏳',
+            'PROCESSING': '🔄',
+            'COMPLETED': '✅',
+            'FAILED': '❌'
+        };
+        const statusIcon = statusIcons[file.status] || '';
+        
+        // Retry info with warning if retries > 0
+        let retryHtml = file.retryCount.toString();
+        if (file.retryCount > 0 && file.status === 'FAILED') {
+            retryHtml = `<span style="color: var(--danger-color)">${file.retryCount} (max reached)</span>`;
+        } else if (file.retryCount > 0) {
+            retryHtml = `<span style="color: var(--warning-color, #f39c12)">${file.retryCount}</span>`;
+        }
+        
+        return `
+        <tr class="${file.status === 'FAILED' ? 'row-failed' : ''}">
+            <td class="cell-truncate" title="${escapeHtml(file.fileName)}">${escapeHtml(file.fileName)}</td>
             <td>${formatFileSize(file.fileSize)}</td>
+            <td><span title="${formatTimestamp(file.firstSeenTime)}">${formatTimeAgo(file.firstSeenTime)}</span></td>
             <td>${file.ageMinutes} min</td>
             <td>
                 <span class="status-badge ${file.status.toLowerCase()}">
-                    ${file.status}
+                    ${statusIcon} ${file.status}
                 </span>
             </td>
-            <td>${file.retryCount}</td>
+            <td>${retryHtml}</td>
+            <td>${processTimeHtml}</td>
             <td>
                 ${file.processOutput ? `
                     <button class="btn btn-sm btn-secondary" data-file-id="${file.id}" onclick="showOutputById(this.dataset.fileId)">
@@ -452,7 +544,7 @@ function renderFiles(files) {
                 ` : '--'}
             </td>
         </tr>
-    `).join('');
+    `}).join('');
 }
 
 // Modal Functions
@@ -577,6 +669,46 @@ function formatFileSize(bytes) {
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function formatDuration(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins < 60) return `${mins}m ${secs}s`;
+    const hours = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    return `${hours}h ${remMins}m`;
+}
+
+function formatTimestamp(timestamp) {
+    if (!timestamp) return '--';
+    try {
+        const date = new Date(timestamp);
+        return date.toLocaleString();
+    } catch {
+        return '--';
+    }
+}
+
+function formatTimeAgo(timestamp) {
+    if (!timestamp) return '--';
+    try {
+        const now = Date.now();
+        const diff = now - timestamp;
+        const mins = Math.floor(diff / 60000);
+        
+        if (mins < 1) return 'Just now';
+        if (mins < 60) return `${mins}m ago`;
+        
+        const hours = Math.floor(mins / 60);
+        if (hours < 24) return `${hours}h ago`;
+        
+        const days = Math.floor(hours / 24);
+        return `${days}d ago`;
+    } catch {
+        return '--';
+    }
 }
 
 // Theme

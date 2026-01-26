@@ -148,9 +148,147 @@
     color: var(--text-color);
 }
 
+/* File Status Summary Cards */
+.file-status-summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.file-status-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+
+.file-status-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.file-status-card.active {
+    border-width: 2px;
+}
+
+.file-status-card.pending {
+    border-left: 3px solid #f1c40f;
+}
+
+.file-status-card.pending.active {
+    border-color: #f1c40f;
+    background: rgba(241, 196, 15, 0.1);
+}
+
+.file-status-card.processing {
+    border-left: 3px solid #3498db;
+}
+
+.file-status-card.processing.active {
+    border-color: #3498db;
+    background: rgba(52, 152, 219, 0.1);
+}
+
+.file-status-card.completed {
+    border-left: 3px solid #27ae60;
+}
+
+.file-status-card.completed.active {
+    border-color: #27ae60;
+    background: rgba(39, 174, 96, 0.1);
+}
+
+.file-status-card.failed {
+    border-left: 3px solid #e74c3c;
+}
+
+.file-status-card.failed.active {
+    border-color: #e74c3c;
+    background: rgba(231, 76, 60, 0.1);
+}
+
+.file-status-icon {
+    font-size: 1.25rem;
+}
+
+.file-status-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.file-status-count {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-color);
+    line-height: 1;
+}
+
+.file-status-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* File Filter Tabs */
+.file-filter-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.filter-tab {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    transition: all 0.2s;
+}
+
+.filter-tab:hover {
+    background: var(--hover-bg, rgba(0, 0, 0, 0.05));
+    color: var(--text-color);
+}
+
+.filter-tab.active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
 .files-table-container {
     max-height: 400px;
     overflow-y: auto;
+}
+
+/* File table specifics */
+#filesTable .status-badge {
+    min-width: 80px;
+    justify-content: center;
+}
+
+/* Process time column */
+.process-time {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.process-time.success {
+    color: var(--success-color);
+}
+
+.process-time.failed {
+    color: var(--danger-color);
 }
 
 /* Status Badges */
@@ -306,6 +444,32 @@
     background-color: var(--hover-bg, rgba(0, 0, 0, 0.05));
 }
 
+/* Failed row highlight */
+.row-failed {
+    background: rgba(231, 76, 60, 0.05);
+}
+
+.row-failed:hover {
+    background: rgba(231, 76, 60, 0.1);
+}
+
+/* Responsive file status summary */
+@media (max-width: 600px) {
+    .file-status-summary {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .file-filter-tabs {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 0.5rem;
+    }
+    
+    .filter-tab {
+        flex-shrink: 0;
+    }
+}
+
 /* Dark mode adjustments */
 [data-theme="dark"] .output-content {
     background: #0d1117;
@@ -313,4 +477,12 @@
 
 [data-theme="dark"] .command-preview {
     background: var(--bg-secondary);
+}
+
+[data-theme="dark"] .row-failed {
+    background: rgba(231, 76, 60, 0.1);
+}
+
+[data-theme="dark"] .row-failed:hover {
+    background: rgba(231, 76, 60, 0.15);
 }

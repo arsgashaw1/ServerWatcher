@@ -146,15 +146,59 @@
                         <h3>📁 Files for: <span id="selectedConfigName">--</span></h3>
                         <button class="btn btn-secondary btn-sm" id="closeFilesBtn">Close</button>
                     </div>
+                    
+                    <!-- File Status Summary -->
+                    <div class="file-status-summary" id="fileStatusSummary">
+                        <div class="file-status-card pending" data-filter="PENDING">
+                            <div class="file-status-icon">⏳</div>
+                            <div class="file-status-info">
+                                <span class="file-status-count" id="filePendingCount">0</span>
+                                <span class="file-status-label">Queued</span>
+                            </div>
+                        </div>
+                        <div class="file-status-card processing" data-filter="PROCESSING">
+                            <div class="file-status-icon">🔄</div>
+                            <div class="file-status-info">
+                                <span class="file-status-count" id="fileProcessingCount">0</span>
+                                <span class="file-status-label">Processing</span>
+                            </div>
+                        </div>
+                        <div class="file-status-card completed" data-filter="COMPLETED">
+                            <div class="file-status-icon">✅</div>
+                            <div class="file-status-info">
+                                <span class="file-status-count" id="fileCompletedCount">0</span>
+                                <span class="file-status-label">Completed</span>
+                            </div>
+                        </div>
+                        <div class="file-status-card failed" data-filter="FAILED">
+                            <div class="file-status-icon">❌</div>
+                            <div class="file-status-info">
+                                <span class="file-status-count" id="fileFailedCount">0</span>
+                                <span class="file-status-label">Failed</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Filter Tabs -->
+                    <div class="file-filter-tabs">
+                        <button class="filter-tab active" data-filter="ALL">All Files</button>
+                        <button class="filter-tab" data-filter="PENDING">Queued</button>
+                        <button class="filter-tab" data-filter="PROCESSING">Processing</button>
+                        <button class="filter-tab" data-filter="COMPLETED">Completed</button>
+                        <button class="filter-tab" data-filter="FAILED">Failed</button>
+                    </div>
+                    
                     <div class="files-table-container">
                         <table class="infra-table" id="filesTable">
                             <thead>
                                 <tr>
                                     <th>File Name</th>
                                     <th>Size</th>
+                                    <th>First Seen</th>
                                     <th>Age</th>
                                     <th>Status</th>
                                     <th>Retries</th>
+                                    <th>Process Time</th>
                                     <th>Output</th>
                                 </tr>
                             </thead>
