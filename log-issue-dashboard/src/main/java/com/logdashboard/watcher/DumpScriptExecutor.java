@@ -20,7 +20,7 @@ public class DumpScriptExecutor {
     
     // Pattern to detect potentially dangerous characters in paths
     // Includes newline characters to prevent command injection via newlines
-    private static final Pattern DANGEROUS_CHARS = Pattern.compile("[;&|`$(){}\\[\\]<>\\n\\r\\0]");
+    private static final Pattern DANGEROUS_CHARS = Pattern.compile("[;&|`$(){}\\[\\]<>\n\r\u0000]");
     
     private final long timeoutMinutes;
     

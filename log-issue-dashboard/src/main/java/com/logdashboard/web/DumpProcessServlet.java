@@ -99,11 +99,6 @@ public class DumpProcessServlet extends HttpServlet {
         PrintWriter out = resp.getWriter();
         
         try {
-            // Check admin authentication
-            if (!checkAdminAuth(req, resp, out)) {
-                return;
-            }
-            
             if (pathInfo.equals("/configs") || pathInfo.equals("/configs/")) {
                 String body = readRequestBody(req);
                 JsonObject json = JsonParser.parseString(body).getAsJsonObject();
@@ -142,11 +137,6 @@ public class DumpProcessServlet extends HttpServlet {
         PrintWriter out = resp.getWriter();
         
         try {
-            // Check admin authentication
-            if (!checkAdminAuth(req, resp, out)) {
-                return;
-            }
-            
             if (pathInfo.matches("/configs/\\d+")) {
                 int id = extractId(pathInfo, "/configs/");
                 String body = readRequestBody(req);
@@ -179,11 +169,6 @@ public class DumpProcessServlet extends HttpServlet {
         PrintWriter out = resp.getWriter();
         
         try {
-            // Check admin authentication
-            if (!checkAdminAuth(req, resp, out)) {
-                return;
-            }
-            
             if (pathInfo.matches("/configs/\\d+")) {
                 int id = extractId(pathInfo, "/configs/");
                 handleDeleteConfig(id, out, resp);

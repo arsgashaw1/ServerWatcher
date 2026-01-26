@@ -1,8 +1,7 @@
 // Dump Processing Management JavaScript
 
 // State
-let isAdmin = false;
-let adminCredentials = { username: '', password: '' };
+let isAdmin = true; // Admin is always enabled for dump processing
 let configs = [];
 let selectedConfigId = null;
 let deleteConfigId = null;
@@ -76,20 +75,19 @@ document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     loadTheme();
     
+    // Show admin columns by default (no authentication required for dump processing)
+    showAdminColumns();
+    
+    // Hide admin login section since it's not needed
+    if (adminSection) {
+        adminSection.style.display = 'none';
+    }
+    
     // Auto-refresh status every 30 seconds
     setInterval(loadStatus, 30000);
     
     // Auto-refresh configs every 60 seconds
     setInterval(loadConfigs, 60000);
-    
-    // Check for saved credentials
-    const savedCreds = sessionStorage.getItem('adminCredentials');
-    if (savedCreds) {
-        const creds = JSON.parse(savedCreds);
-        adminUsername.value = creds.username;
-        adminPassword.value = creds.password;
-        validateCredentials();
-    }
 });
 
 function setupEventListeners() {
@@ -108,10 +106,6 @@ function setupEventListeners() {
     
     // Add config
     addConfigBtn.addEventListener('click', () => {
-        if (!isAdmin) {
-            showAdminRequired();
-            return;
-        }
         openAddModal();
     });
     
@@ -233,11 +227,6 @@ async function validateCredentials() {
 }
 
 async function saveConfig() {
-    if (!isAdmin) {
-        showAdminRequired();
-        return;
-    }
-    
     const config = {
         serverName: serverNameInput.value,
         dbType: dbTypeInput.value,
@@ -257,9 +246,7 @@ async function saveConfig() {
         const response = await fetch(url, {
             method,
             headers: {
-                'Content-Type': 'application/json',
-                'X-Admin-Username': adminCredentials.username,
-                'X-Admin-Password': adminCredentials.password
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify(config)
         });
@@ -289,11 +276,7 @@ async function confirmDelete() {
     
     try {
         const response = await fetch(`/dump/configs/${deleteConfigId}`, {
-            method: 'DELETE',
-            headers: {
-                'X-Admin-Username': adminCredentials.username,
-                'X-Admin-Password': adminCredentials.password
-            }
+            method: 'DELETE'
         });
         
         if (response.ok) {
@@ -315,18 +298,9 @@ async function confirmDelete() {
 }
 
 async function triggerProcessing(configId) {
-    if (!isAdmin) {
-        showAdminRequired();
-        return;
-    }
-    
     try {
         const response = await fetch(`/dump/configs/${configId}/run`, {
-            method: 'POST',
-            headers: {
-                'X-Admin-Username': adminCredentials.username,
-                'X-Admin-Password': adminCredentials.password
-            }
+            method: 'POST'
         });
         
         const data = await response.json();
@@ -364,9 +338,7 @@ async function validateConfig() {
         const response = await fetch('/dump/validate', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'X-Admin-Username': adminCredentials.username,
-                'X-Admin-Password': adminCredentials.password
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify(config)
         });
