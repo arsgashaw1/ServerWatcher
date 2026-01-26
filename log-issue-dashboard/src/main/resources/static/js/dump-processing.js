@@ -642,11 +642,11 @@ function updateCommandPreview() {
     const suTarget = adminUser ? `su - ${adminUser}` : 'su';
     
     if (hasPassword) {
-        // With password: printf sends password + command to su stdin
-        command = `cd ${quotePath(dbFolder)} && printf '%s\\n%s\\n' '****' ${quotePath(scriptCommand)} | ${suTarget}`;
+        // With password: use here-document to send password then command
+        command = `cd ${quotePath(dbFolder)} && ${suTarget} << 'SUEOF'\n****\n${scriptCommand}\nSUEOF`;
     } else {
-        // No password: just pipe command to su
-        command = `cd ${quotePath(dbFolder)} && echo ${quotePath(scriptCommand)} | ${suTarget}`;
+        // No password: use here-document with just command
+        command = `cd ${quotePath(dbFolder)} && ${suTarget} << 'SUEOF'\n${scriptCommand}\nSUEOF`;
     }
     
     if (commandPreviewText) commandPreviewText.textContent = command;

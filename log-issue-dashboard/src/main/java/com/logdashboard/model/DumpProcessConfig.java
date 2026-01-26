@@ -86,9 +86,9 @@ public class DumpProcessConfig {
     
     /**
      * Builds the full command with su for elevated privileges.
-     * Uses z/OS compatible syntax:
+     * Uses z/OS compatible syntax with here-document:
      * - cd to dbFolder first
-     * - Then pipe password (if provided) and script command to su
+     * - Use here-document to send password and command to su
      * - If adminUser is set: su - <adminUser>
      * - If adminUser is empty: su (enters root/admin mode)
      * Paths are properly quoted to handle spaces and special characters.
@@ -101,18 +101,18 @@ public class DumpProcessConfig {
         String suTarget = hasUser ? "su - " + adminUser.trim() : "su";
         
         if (hasPassword) {
-            // Use printf to send password followed by command
-            // printf sends: password\ncommand\n to su's stdin
-            return String.format("cd %s && printf '%%s\\n%%s\\n' %s %s | %s", 
+            // Use here-document to send password and command to su
+            // The password goes first, then the command to execute
+            return String.format("cd %s && %s << 'SUEOF'\n%s\n%s\nSUEOF", 
                 shellQuote(dbFolder), 
-                shellQuote(adminPassword), 
-                shellQuote(baseCommand), 
-                suTarget);
+                suTarget,
+                adminPassword,
+                baseCommand);
         }
         
-        // No password - just pipe the command (for cases where password not required)
-        return String.format("cd %s && echo %s | %s", 
-            shellQuote(dbFolder), shellQuote(baseCommand), suTarget);
+        // No password - use here-document with just the command
+        return String.format("cd %s && %s << 'SUEOF'\n%s\nSUEOF", 
+            shellQuote(dbFolder), suTarget, baseCommand);
     }
     
     // Getters and Setters
