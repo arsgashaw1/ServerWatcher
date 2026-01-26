@@ -155,15 +155,19 @@ public class DumpProcessingWatcher {
                             name.toLowerCase().endsWith(MDB_EXTENSION));
                         int fileCount = mdbFiles != null ? mdbFiles.length : 0;
                         if (fileCount > 0) {
-                            updateStatus("Polling " + config.getServerName() + 
-                                ": found " + fileCount + " .mdb file(s) in " + config.getDumpFolder());
+                            updateStatus("Polling " + config.getServerName() + " (ID:" + config.getId() + 
+                                "): found " + fileCount + " .mdb file(s) in " + config.getDumpFolder());
                         }
+                    } else {
+                        updateStatus("WARNING: Dump folder not accessible: " + config.getDumpFolder() + 
+                            " for config " + config.getServerName() + " (ID:" + config.getId() + ")");
                     }
                     
                     scanDumpFolder(config);
                     processReadyFiles(config);
                 } catch (Exception e) {
-                    System.err.println("Error processing config " + config.getServerName() + ": " + e.getMessage());
+                    System.err.println("Error processing config " + config.getServerName() + 
+                        " (ID:" + config.getId() + "): " + e.getMessage());
                     e.printStackTrace();
                 }
             }
@@ -180,6 +184,7 @@ public class DumpProcessingWatcher {
         File dumpFolder = new File(config.getDumpFolder());
         
         if (!dumpFolder.exists() || !dumpFolder.isDirectory()) {
+            updateStatus("WARNING: Dump folder does not exist: " + config.getDumpFolder());
             return;
         }
         
@@ -195,16 +200,16 @@ public class DumpProcessingWatcher {
             return;
         }
         
-        // Track which files we found
-        Set<String> foundFiles = new HashSet<>();
+        int newFiles = 0;
+        int existingFiles = 0;
         
         for (File mdbFile : mdbFiles) {
             String filePath = mdbFile.getAbsolutePath();
-            foundFiles.add(filePath);
             
             try {
                 // Check if we're already tracking this file
-                if (store.findFileByPath(config.getId(), filePath).isEmpty()) {
+                var existing = store.findFileByPath(config.getId(), filePath);
+                if (existing.isEmpty()) {
                     // New file - add to tracking
                     DumpFileTracking tracking = new DumpFileTracking(
                         config.getId(),
@@ -216,12 +221,22 @@ public class DumpProcessingWatcher {
                     );
                     
                     store.addFileTracking(tracking);
+                    newFiles++;
                     updateStatus("New .mdb file detected: " + mdbFile.getName() + 
                         " [" + config.getServerName() + "]");
+                } else {
+                    existingFiles++;
                 }
             } catch (SQLException e) {
                 System.err.println("Error adding file tracking for " + filePath + ": " + e.getMessage());
+                e.printStackTrace();
             }
+        }
+        
+        // Log summary
+        if (newFiles > 0 || existingFiles > 0) {
+            updateStatus("Scan complete for " + config.getServerName() + 
+                ": " + newFiles + " new, " + existingFiles + " already tracked");
         }
     }
     
