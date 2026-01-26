@@ -141,16 +141,35 @@ public class DumpProcessingWatcher {
         try {
             List<DumpProcessConfig> configs = store.getEnabledConfigs();
             
+            if (configs.isEmpty()) {
+                // No configs to poll - this is normal if no configurations are set up
+                return;
+            }
+            
             for (DumpProcessConfig config : configs) {
                 try {
+                    // Log that we're checking this config's dump folder
+                    File dumpFolder = new File(config.getDumpFolder());
+                    if (dumpFolder.exists() && dumpFolder.isDirectory()) {
+                        File[] mdbFiles = dumpFolder.listFiles((dir, name) -> 
+                            name.toLowerCase().endsWith(MDB_EXTENSION));
+                        int fileCount = mdbFiles != null ? mdbFiles.length : 0;
+                        if (fileCount > 0) {
+                            updateStatus("Polling " + config.getServerName() + 
+                                ": found " + fileCount + " .mdb file(s) in " + config.getDumpFolder());
+                        }
+                    }
+                    
                     scanDumpFolder(config);
                     processReadyFiles(config);
                 } catch (Exception e) {
                     System.err.println("Error processing config " + config.getServerName() + ": " + e.getMessage());
+                    e.printStackTrace();
                 }
             }
         } catch (Exception e) {
             System.err.println("Error polling dump folders: " + e.getMessage());
+            e.printStackTrace();
         }
     }
     
