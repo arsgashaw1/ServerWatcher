@@ -615,15 +615,16 @@ function updateCommandPreview() {
     // Quote paths to handle spaces - using single quotes with escaped single quotes within
     const quotePath = (p) => "'" + p.replace(/'/g, "'\\''") + "'";
     
-    let baseCommand = `cd ${quotePath(dbFolder)} && ./ExtractMDB.do.sh ${dbType} ${quotePath(javaPath)} ${quotePath(dumpFolder)}`;
+    // The script command (without cd)
+    const scriptCommand = `./ExtractMDB.do.sh ${dbType} ${quotePath(javaPath)} ${quotePath(dumpFolder)}`;
     
     let command;
     if (adminUser) {
-        // Run as specific user using heredoc (portable across Linux and z/OS)
-        command = `su - ${adminUser} << 'SUEOF'\n${baseCommand}\nSUEOF`;
+        // Run as specific user: cd, then pipe to su - user
+        command = `cd ${quotePath(dbFolder)} && echo ${quotePath(scriptCommand)} | su - ${adminUser}`;
     } else {
-        // Run directly without su wrapper
-        command = baseCommand;
+        // Run as admin/root: cd, then pipe to su
+        command = `cd ${quotePath(dbFolder)} && echo ${quotePath(scriptCommand)} | su`;
     }
     
     commandPreviewText.textContent = command;

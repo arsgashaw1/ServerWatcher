@@ -84,26 +84,26 @@ public class DumpProcessConfig {
     }
     
     /**
-     * Builds the full command with optional su wrapper.
-     * Uses portable syntax compatible with z/OS and Linux:
-     * - If adminUser is set: Uses heredoc with su - <adminUser>
-     * - If adminUser is empty: Runs directly without su wrapper
-     *   (assumes the application runs with necessary privileges)
+     * Builds the full command with su for elevated privileges.
+     * Uses z/OS compatible syntax:
+     * - cd to dbFolder first
+     * - Then pipe the script command to su (which enters admin mode)
+     * - If adminUser is set: su - <adminUser>
+     * - If adminUser is empty: su (enters root/admin mode)
      * Paths are properly quoted to handle spaces and special characters.
      */
     public String buildFullCommand() {
         String baseCommand = buildCommand();
-        String cdAndRun = String.format("cd %s && %s", shellQuote(dbFolder), baseCommand);
         
         if (adminUser != null && !adminUser.trim().isEmpty()) {
-            // Run as specific user using heredoc (portable across Linux and z/OS)
-            // The heredoc passes the command via stdin to the user's shell
-            return String.format("su - %s << 'SUEOF'\n%s\nSUEOF", adminUser.trim(), cdAndRun);
+            // Run as specific user: cd to dir, then pipe command to su - user
+            return String.format("cd %s && echo %s | su - %s", 
+                shellQuote(dbFolder), shellQuote(baseCommand), adminUser.trim());
         }
         
-        // No admin user - run directly without su wrapper
-        // The application is assumed to run with necessary privileges
-        return cdAndRun;
+        // Run as root/admin: cd to dir, then pipe command to su
+        return String.format("cd %s && echo %s | su", 
+            shellQuote(dbFolder), shellQuote(baseCommand));
     }
     
     // Getters and Setters
