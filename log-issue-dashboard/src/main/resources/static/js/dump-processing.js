@@ -92,12 +92,16 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function setupEventListeners() {
-    // Admin toggle
-    adminToggle.addEventListener('click', () => {
-        adminForm.style.display = adminForm.style.display === 'none' ? 'block' : 'none';
-        adminToggle.querySelector('.toggle-icon').textContent = 
-            adminForm.style.display === 'none' ? '▼' : '▲';
-    });
+    // Admin toggle (if element exists)
+    if (adminToggle && adminForm) {
+        adminToggle.addEventListener('click', () => {
+            adminForm.style.display = adminForm.style.display === 'none' ? 'block' : 'none';
+            const toggleIcon = adminToggle.querySelector('.toggle-icon');
+            if (toggleIcon) {
+                toggleIcon.textContent = adminForm.style.display === 'none' ? '▼' : '▲';
+            }
+        });
+    }
     
     // Login (if admin elements exist)
     if (loginBtn) loginBtn.addEventListener('click', validateCredentials);
@@ -106,7 +110,7 @@ function setupEventListeners() {
     });
     
     // Add config
-    addConfigBtn.addEventListener('click', () => {
+    if (addConfigBtn) addConfigBtn.addEventListener('click', () => {
         openAddModal();
     });
     
@@ -126,8 +130,8 @@ function setupEventListeners() {
     if (outputCloseBtn) outputCloseBtn.addEventListener('click', closeOutputModal);
     
     // Files section
-    closeFilesBtn.addEventListener('click', () => {
-        filesSection.style.display = 'none';
+    if (closeFilesBtn) closeFilesBtn.addEventListener('click', () => {
+        if (filesSection) filesSection.style.display = 'none';
         selectedConfigId = null;
         currentFiles = [];
         currentFilter = 'ALL';
@@ -152,7 +156,7 @@ function setupEventListeners() {
         });
     
     // Theme toggle
-    themeToggle.addEventListener('click', toggleTheme);
+    if (themeToggle) themeToggle.addEventListener('click', toggleTheme);
     
     // Close modals on outside click
     window.addEventListener('click', (e) => {
@@ -381,6 +385,8 @@ async function triggerProcessing(configId) {
 }
 
 async function validateConfig() {
+    console.log('Validate button clicked');
+    
     const config = {
         serverName: serverNameInput ? serverNameInput.value : '',
         dbType: dbTypeInput ? dbTypeInput.value : '',
@@ -389,6 +395,8 @@ async function validateConfig() {
         javaPath: javaPathInput ? javaPathInput.value : '',
         thresholdMinutes: parseInt(thresholdMinutesInput ? thresholdMinutesInput.value : '1') || 1
     };
+    
+    console.log('Validating config:', config);
     
     try {
         const response = await fetch('/dump/validate', {
@@ -400,20 +408,34 @@ async function validateConfig() {
         });
         
         const data = await response.json();
+        console.log('Validation response:', data);
         
-        validationResult.style.display = 'block';
-        if (data.valid) {
-            validationResult.className = 'validation-result success';
-            validationResult.textContent = '✓ Configuration is valid';
+        if (validationResult) {
+            validationResult.style.display = 'block';
+            if (data.valid) {
+                validationResult.className = 'validation-result success';
+                validationResult.textContent = '✓ Configuration is valid';
+            } else {
+                validationResult.className = 'validation-result error';
+                validationResult.textContent = '✗ ' + (data.error || 'Invalid configuration');
+            }
         } else {
-            validationResult.className = 'validation-result error';
-            validationResult.textContent = '✗ ' + (data.error || 'Invalid configuration');
+            // Fallback to alert if validationResult element not found
+            if (data.valid) {
+                alert('✓ Configuration is valid');
+            } else {
+                alert('✗ ' + (data.error || 'Invalid configuration'));
+            }
         }
     } catch (error) {
         console.error('Error validating config:', error);
-        validationResult.style.display = 'block';
-        validationResult.className = 'validation-result error';
-        validationResult.textContent = '✗ Error validating configuration';
+        if (validationResult) {
+            validationResult.style.display = 'block';
+            validationResult.className = 'validation-result error';
+            validationResult.textContent = '✗ Error validating configuration: ' + error.message;
+        } else {
+            alert('Error validating configuration: ' + error.message);
+        }
     }
 }
 
