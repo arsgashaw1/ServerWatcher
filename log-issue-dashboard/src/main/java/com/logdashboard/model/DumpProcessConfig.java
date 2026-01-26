@@ -84,26 +84,26 @@ public class DumpProcessConfig {
     }
     
     /**
-     * Builds the full command with su wrapper.
-     * Always runs with su for elevated privileges:
-     * - If adminUser is set: su - <adminUser> -c "cd <dbFolder> && <command>"
-     * - If adminUser is empty: su -c "cd <dbFolder> && <command>" (runs as root)
+     * Builds the full command with optional su wrapper.
+     * Uses portable syntax compatible with z/OS and Linux:
+     * - If adminUser is set: Uses heredoc with su - <adminUser>
+     * - If adminUser is empty: Runs directly without su wrapper
+     *   (assumes the application runs with necessary privileges)
      * Paths are properly quoted to handle spaces and special characters.
      */
     public String buildFullCommand() {
         String baseCommand = buildCommand();
         String cdAndRun = String.format("cd %s && %s", shellQuote(dbFolder), baseCommand);
         
-        // Escape double quotes in the command for the su wrapper
-        String escapedCommand = cdAndRun.replace("\"", "\\\"");
-        
         if (adminUser != null && !adminUser.trim().isEmpty()) {
-            // Run as specific user
-            return String.format("su - %s -c \"%s\"", adminUser.trim(), escapedCommand);
+            // Run as specific user using heredoc (portable across Linux and z/OS)
+            // The heredoc passes the command via stdin to the user's shell
+            return String.format("su - %s << 'SUEOF'\n%s\nSUEOF", adminUser.trim(), cdAndRun);
         }
         
-        // Run as root (default)
-        return String.format("su -c \"%s\"", escapedCommand);
+        // No admin user - run directly without su wrapper
+        // The application is assumed to run with necessary privileges
+        return cdAndRun;
     }
     
     // Getters and Setters
