@@ -339,8 +339,9 @@ public class DumpProcessingWatcher {
                     try {
                         store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_FAILED, result.getOutput());
                         
-                        // Check if we should retry
-                        if (file.canRetry(MAX_RETRIES)) {
+                        // Check if we should retry - check retry count directly since we're in the failure block
+                        // (the in-memory status is stale, but we know this is a failure)
+                        if (file.getRetryCount() < MAX_RETRIES) {
                             store.incrementRetryCount(file.getId());
                         }
                     } catch (SQLException e) {
@@ -353,6 +354,15 @@ public class DumpProcessingWatcher {
             
         } catch (SQLException e) {
             System.err.println("Database error processing config " + config.getServerName() + ": " + e.getMessage());
+            // Mark files as FAILED to prevent them from being stuck in PROCESSING forever
+            for (DumpFileTracking file : files) {
+                try {
+                    store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_FAILED, 
+                        "Database error: " + e.getMessage());
+                } catch (SQLException ex) {
+                    System.err.println("Error updating file status: " + ex.getMessage());
+                }
+            }
         } catch (Exception e) {
             System.err.println("Error processing config " + config.getServerName() + ": " + e.getMessage());
             for (DumpFileTracking file : files) {

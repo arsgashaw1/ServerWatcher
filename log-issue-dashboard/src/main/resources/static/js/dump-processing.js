@@ -425,6 +425,14 @@ function renderFiles(files) {
         return;
     }
     
+    // Store file outputs in a map for safe retrieval (avoids HTML attribute injection)
+    window._fileOutputs = {};
+    files.forEach(file => {
+        if (file.processOutput) {
+            window._fileOutputs[file.id] = file.processOutput;
+        }
+    });
+    
     filesTableBody.innerHTML = files.map(file => `
         <tr>
             <td>${escapeHtml(file.fileName)}</td>
@@ -438,7 +446,7 @@ function renderFiles(files) {
             <td>${file.retryCount}</td>
             <td>
                 ${file.processOutput ? `
-                    <button class="btn btn-sm btn-secondary" onclick='showOutput(${JSON.stringify(file.processOutput)})'>
+                    <button class="btn btn-sm btn-secondary" data-file-id="${file.id}" onclick="showOutputById(this.dataset.fileId)">
                         View
                     </button>
                 ` : '--'}
@@ -497,6 +505,11 @@ function showOutput(output) {
     outputModal.style.display = 'flex';
 }
 
+function showOutputById(fileId) {
+    const output = window._fileOutputs ? window._fileOutputs[fileId] : null;
+    showOutput(output);
+}
+
 function updateCommandPreview() {
     const dbType = dbTypeInput.value || '<DB_TYPE>';
     const javaPath = javaPathInput.value || '<JAVA_PATH>';
@@ -504,10 +517,16 @@ function updateCommandPreview() {
     const dbFolder = dbFolderInput.value || '<DB_FOLDER>';
     const adminUser = adminUserInput.value;
     
-    let command = `cd ${dbFolder} && ./ExtractMDB.do.sh ${dbType} ${javaPath} ${dumpFolder}`;
+    // Quote paths to handle spaces - using single quotes with escaped single quotes within
+    const quotePath = (p) => "'" + p.replace(/'/g, "'\\''") + "'";
     
+    let command = `cd ${quotePath(dbFolder)} && ./ExtractMDB.do.sh ${dbType} ${quotePath(javaPath)} ${quotePath(dumpFolder)}`;
+    
+    // Always wrap with su - runs as root by default or as specified admin user
     if (adminUser) {
         command = `su - ${adminUser} -c "${command}"`;
+    } else {
+        command = `su -c "${command}"`;
     }
     
     commandPreviewText.textContent = command;

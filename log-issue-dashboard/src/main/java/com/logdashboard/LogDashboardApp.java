@@ -167,6 +167,7 @@ public class LogDashboardApp {
                 }
                 issueStore = new IssueStore(config.getMaxIssuesDisplayed());
                 infrastructureStore = null;
+                dumpProcessingStore = null;
             }
         } else {
             System.out.println("Storage: In-memory (data will be lost on restart)");

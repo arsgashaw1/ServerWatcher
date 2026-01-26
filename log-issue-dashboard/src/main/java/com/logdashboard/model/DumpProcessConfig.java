@@ -63,12 +63,24 @@ public class DumpProcessConfig {
     }
     
     /**
+     * Escapes a path for safe use in shell commands by wrapping with single quotes
+     * and escaping any single quotes within the path.
+     */
+    private static String shellQuote(String path) {
+        if (path == null) return "''";
+        // Escape single quotes by ending the single-quoted string, adding escaped quote, and restarting
+        // e.g., "it's" becomes 'it'\''s'
+        return "'" + path.replace("'", "'\\''") + "'";
+    }
+    
+    /**
      * Builds the command to execute.
      * Format: ./ExtractMDB.do.sh <dbType> <javaPath> <dumpFolder>
+     * Paths are properly quoted to handle spaces and special characters.
      */
     public String buildCommand() {
         return String.format("./ExtractMDB.do.sh %s %s %s", 
-            dbType, javaPath, dumpFolder);
+            dbType, shellQuote(javaPath), shellQuote(dumpFolder));
     }
     
     /**
@@ -76,10 +88,11 @@ public class DumpProcessConfig {
      * Always runs with su for elevated privileges:
      * - If adminUser is set: su - <adminUser> -c "cd <dbFolder> && <command>"
      * - If adminUser is empty: su -c "cd <dbFolder> && <command>" (runs as root)
+     * Paths are properly quoted to handle spaces and special characters.
      */
     public String buildFullCommand() {
         String baseCommand = buildCommand();
-        String cdAndRun = String.format("cd %s && %s", dbFolder, baseCommand);
+        String cdAndRun = String.format("cd %s && %s", shellQuote(dbFolder), baseCommand);
         
         // Escape double quotes in the command for the su wrapper
         String escapedCommand = cdAndRun.replace("\"", "\\\"");

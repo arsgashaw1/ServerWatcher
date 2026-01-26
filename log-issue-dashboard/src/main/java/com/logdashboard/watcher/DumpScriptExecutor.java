@@ -71,16 +71,22 @@ public class DumpScriptExecutor {
             
             // Read output
             StringBuilder output = new StringBuilder();
+            boolean outputTruncated = false;
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    output.append(line).append("\n");
-                    // Limit output size to prevent memory issues
-                    if (output.length() > 100000) { // 100KB limit
-                        output.append("\n... [output truncated]\n");
-                        break;
+                    if (!outputTruncated) {
+                        output.append(line).append("\n");
+                        // Limit output size to prevent memory issues
+                        if (output.length() > 100000) { // 100KB limit
+                            output.append("\n... [output truncated]\n");
+                            outputTruncated = true;
+                            // Continue reading to drain the output and prevent SIGPIPE
+                        }
                     }
+                    // When truncated, we still read lines but don't store them
+                    // This allows the process to complete normally
                 }
             }
             

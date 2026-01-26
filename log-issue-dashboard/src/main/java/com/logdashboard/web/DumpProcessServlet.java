@@ -193,34 +193,9 @@ public class DumpProcessServlet extends HttpServlet {
         resp.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Admin-Username, X-Admin-Password");
     }
     
-    // ==================== Authentication ====================
-    
-    private boolean checkAdminAuth(HttpServletRequest req, HttpServletResponse resp, PrintWriter out) {
-        String username = req.getHeader("X-Admin-Username");
-        String password = req.getHeader("X-Admin-Password");
-        
-        if (!infraStore.isAdminConfigured()) {
-            resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-            out.write(GSON.toJson(error("Admin credentials not configured")));
-            return false;
-        }
-        
-        if (username == null || password == null) {
-            resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            out.write(GSON.toJson(error("Admin credentials required")));
-            return false;
-        }
-        
-        if (!infraStore.validateAdmin(username, password)) {
-            resp.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            out.write(GSON.toJson(error("Invalid admin credentials")));
-            return false;
-        }
-        
-        return true;
-    }
-    
     // ==================== Config Handlers ====================
+    // Note: Authentication is intentionally disabled for dump processing operations.
+    // All CRUD operations are allowed without admin credentials per user requirement.
     
     private void handleGetConfigs(PrintWriter out) {
         List<DumpProcessConfig> configs = dumpStore.getAllConfigs();
@@ -516,15 +491,31 @@ public class DumpProcessServlet extends HttpServlet {
     }
     
     private void updateConfigFromJson(DumpProcessConfig config, JsonObject json) {
-        if (json.has("serverName")) config.setServerName(json.get("serverName").getAsString());
-        if (json.has("dbFolder")) config.setDbFolder(json.get("dbFolder").getAsString());
-        if (json.has("dumpFolder")) config.setDumpFolder(json.get("dumpFolder").getAsString());
-        if (json.has("dbType")) config.setDbType(json.get("dbType").getAsString());
-        if (json.has("javaPath")) config.setJavaPath(json.get("javaPath").getAsString());
-        if (json.has("thresholdMinutes")) config.setThresholdMinutes(json.get("thresholdMinutes").getAsInt());
-        if (json.has("adminUser")) config.setAdminUser(
-            json.get("adminUser").isJsonNull() ? null : json.get("adminUser").getAsString());
-        if (json.has("enabled")) config.setEnabled(json.get("enabled").getAsBoolean());
+        // Use null-safe getters to handle explicit null values in JSON
+        if (json.has("serverName") && !json.get("serverName").isJsonNull()) {
+            config.setServerName(json.get("serverName").getAsString());
+        }
+        if (json.has("dbFolder") && !json.get("dbFolder").isJsonNull()) {
+            config.setDbFolder(json.get("dbFolder").getAsString());
+        }
+        if (json.has("dumpFolder") && !json.get("dumpFolder").isJsonNull()) {
+            config.setDumpFolder(json.get("dumpFolder").getAsString());
+        }
+        if (json.has("dbType") && !json.get("dbType").isJsonNull()) {
+            config.setDbType(json.get("dbType").getAsString());
+        }
+        if (json.has("javaPath") && !json.get("javaPath").isJsonNull()) {
+            config.setJavaPath(json.get("javaPath").getAsString());
+        }
+        if (json.has("thresholdMinutes") && !json.get("thresholdMinutes").isJsonNull()) {
+            config.setThresholdMinutes(json.get("thresholdMinutes").getAsInt());
+        }
+        if (json.has("adminUser")) {
+            config.setAdminUser(json.get("adminUser").isJsonNull() ? null : json.get("adminUser").getAsString());
+        }
+        if (json.has("enabled") && !json.get("enabled").isJsonNull()) {
+            config.setEnabled(json.get("enabled").getAsBoolean());
+        }
     }
     
     private String validateConfigFields(DumpProcessConfig config) {
