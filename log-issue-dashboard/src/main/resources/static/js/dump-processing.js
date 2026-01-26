@@ -42,9 +42,6 @@ const dbFolderInput = document.getElementById('dbFolder');
 const dumpFolderInput = document.getElementById('dumpFolder');
 const javaPathInput = document.getElementById('javaPath');
 const thresholdMinutesInput = document.getElementById('thresholdMinutes');
-const adminUserInput = document.getElementById('suAdminUser');
-const adminPasswordInput = document.getElementById('suAdminPassword');
-const passwordHint = document.getElementById('passwordHint');
 const enabledInput = document.getElementById('enabled');
 const commandPreviewText = document.getElementById('commandPreviewText');
 const validationResult = document.getElementById('validationResult');
@@ -147,7 +144,7 @@ function setupEventListeners() {
     });
     
     // Command preview updates
-    [serverNameInput, dbTypeInput, dbFolderInput, dumpFolderInput, javaPathInput, adminUserInput, adminPasswordInput]
+    [serverNameInput, dbTypeInput, dbFolderInput, dumpFolderInput, javaPathInput]
         .filter(input => input !== null)
         .forEach(input => {
             input.addEventListener('input', updateCommandPreview);
@@ -295,14 +292,8 @@ async function saveConfig() {
         dumpFolder: dumpFolderInput ? dumpFolderInput.value : '',
         javaPath: javaPathInput ? javaPathInput.value : '',
         thresholdMinutes: parseInt(thresholdMinutesInput ? thresholdMinutesInput.value : '1') || 1,
-        adminUser: (adminUserInput && adminUserInput.value) ? adminUserInput.value : null,
         enabled: enabledInput ? enabledInput.checked : true
     };
-    
-    // Only include password if provided (allows keeping existing password on edit)
-    if (adminPasswordInput && adminPasswordInput.value) {
-        config.adminPassword = adminPasswordInput.value;
-    }
     
     const id = configIdInput.value;
     const url = id ? `/dump/configs/${id}` : '/dump/configs';
@@ -396,14 +387,8 @@ async function validateConfig() {
         dbFolder: dbFolderInput ? dbFolderInput.value : '',
         dumpFolder: dumpFolderInput ? dumpFolderInput.value : '',
         javaPath: javaPathInput ? javaPathInput.value : '',
-        thresholdMinutes: parseInt(thresholdMinutesInput ? thresholdMinutesInput.value : '1') || 1,
-        adminUser: (adminUserInput && adminUserInput.value) ? adminUserInput.value : null
+        thresholdMinutes: parseInt(thresholdMinutesInput ? thresholdMinutesInput.value : '1') || 1
     };
-    
-    // Include password if provided
-    if (adminPasswordInput && adminPasswordInput.value) {
-        config.adminPassword = adminPasswordInput.value;
-    }
     
     try {
         const response = await fetch('/dump/validate', {
@@ -570,8 +555,6 @@ function openAddModal() {
     configIdInput.value = '';
     enabledInput.checked = true;
     thresholdMinutesInput.value = '1';
-    if (adminPasswordInput) adminPasswordInput.value = '';
-    if (passwordHint) passwordHint.style.display = 'none';
     validationResult.style.display = 'none';
     updateCommandPreview();
     configModal.style.display = 'flex';
@@ -589,10 +572,6 @@ function editConfig(id) {
     dumpFolderInput.value = config.dumpFolder || '';
     javaPathInput.value = config.javaPath || '';
     thresholdMinutesInput.value = config.thresholdMinutes || 1;
-    if (adminUserInput) adminUserInput.value = config.adminUser || '';
-    if (adminPasswordInput) adminPasswordInput.value = ''; // Don't populate password for security
-    // Show hint if password is already set
-    if (passwordHint) passwordHint.style.display = config.hasPassword ? 'block' : 'none';
     enabledInput.checked = config.enabled !== false;
     validationResult.style.display = 'none';
     updateCommandPreview();
@@ -628,26 +607,12 @@ function updateCommandPreview() {
     const javaPath = javaPathInput ? javaPathInput.value || '<JAVA_PATH>' : '<JAVA_PATH>';
     const dumpFolder = dumpFolderInput ? dumpFolderInput.value || '<DUMP_FOLDER>' : '<DUMP_FOLDER>';
     const dbFolder = dbFolderInput ? dbFolderInput.value || '<DB_FOLDER>' : '<DB_FOLDER>';
-    const adminUser = adminUserInput ? adminUserInput.value : '';
-    const hasPassword = (adminPasswordInput && adminPasswordInput.value) || 
-                        (passwordHint && passwordHint.style.display !== 'none');
     
     // Quote paths to handle spaces - using single quotes with escaped single quotes within
     const quotePath = (p) => "'" + p.replace(/'/g, "'\\''") + "'";
     
-    // The script command (without cd)
-    const scriptCommand = `./ExtractMDB.do.sh ${dbType} ${quotePath(javaPath)} ${quotePath(dumpFolder)}`;
-    
-    let command;
-    const suTarget = adminUser ? `su - ${adminUser}` : 'su';
-    
-    if (hasPassword) {
-        // With password: use here-document to send password then command
-        command = `cd ${quotePath(dbFolder)} && ${suTarget} << 'SUEOF'\n****\n${scriptCommand}\nSUEOF`;
-    } else {
-        // No password: use here-document with just command
-        command = `cd ${quotePath(dbFolder)} && ${suTarget} << 'SUEOF'\n${scriptCommand}\nSUEOF`;
-    }
+    // Simple command: cd to folder and run script
+    const command = `cd ${quotePath(dbFolder)} && ./ExtractMDB.do.sh ${dbType} ${quotePath(javaPath)} ${quotePath(dumpFolder)}`;
     
     if (commandPreviewText) commandPreviewText.textContent = command;
 }

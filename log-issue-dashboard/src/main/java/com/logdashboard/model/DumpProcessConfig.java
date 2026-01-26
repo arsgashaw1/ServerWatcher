@@ -85,34 +85,13 @@ public class DumpProcessConfig {
     }
     
     /**
-     * Builds the full command with su for elevated privileges.
-     * Uses z/OS compatible syntax with here-document:
-     * - cd to dbFolder first
-     * - Use here-document to send password and command to su
-     * - If adminUser is set: su - <adminUser>
-     * - If adminUser is empty: su (enters root/admin mode)
+     * Builds the full command to execute.
+     * Simply cd to dbFolder and run the script directly.
      * Paths are properly quoted to handle spaces and special characters.
      */
     public String buildFullCommand() {
         String baseCommand = buildCommand();
-        boolean hasUser = adminUser != null && !adminUser.trim().isEmpty();
-        boolean hasPassword = adminPassword != null && !adminPassword.isEmpty();
-        
-        String suTarget = hasUser ? "su - " + adminUser.trim() : "su";
-        
-        if (hasPassword) {
-            // Use here-document to send password and command to su
-            // The password goes first, then the command to execute
-            return String.format("cd %s && %s << 'SUEOF'\n%s\n%s\nSUEOF", 
-                shellQuote(dbFolder), 
-                suTarget,
-                adminPassword,
-                baseCommand);
-        }
-        
-        // No password - use here-document with just the command
-        return String.format("cd %s && %s << 'SUEOF'\n%s\nSUEOF", 
-            shellQuote(dbFolder), suTarget, baseCommand);
+        return String.format("cd %s && %s", shellQuote(dbFolder), baseCommand);
     }
     
     // Getters and Setters
