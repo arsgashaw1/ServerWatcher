@@ -38,6 +38,7 @@ public class DumpProcessingStore {
                 "    java_path VARCHAR(500) NOT NULL," +
                 "    threshold_minutes INT DEFAULT 1," +
                 "    admin_user VARCHAR(100)," +
+                "    admin_password VARCHAR(255)," +
                 "    enabled BOOLEAN DEFAULT TRUE," +
                 "    last_run_time VARCHAR(50)," +
                 "    last_run_status VARCHAR(50)," +
@@ -45,6 +46,13 @@ public class DumpProcessingStore {
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                 "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                 ")");
+            
+            // Add admin_password column if it doesn't exist (for existing databases)
+            try {
+                stmt.execute("ALTER TABLE dump_process_config ADD COLUMN IF NOT EXISTS admin_password VARCHAR(255)");
+            } catch (SQLException e) {
+                // Column might already exist, ignore
+            }
             
             // Create dump_file_tracking table
             stmt.execute(
@@ -81,7 +89,7 @@ public class DumpProcessingStore {
     public List<DumpProcessConfig> getAllConfigs() {
         List<DumpProcessConfig> configs = new ArrayList<>();
         String sql = "SELECT id, server_name, db_folder, dump_folder, db_type, java_path, " +
-                     "threshold_minutes, admin_user, enabled, last_run_time, last_run_status, last_run_output " +
+                     "threshold_minutes, admin_user, admin_password, enabled, last_run_time, last_run_status, last_run_output " +
                      "FROM dump_process_config ORDER BY id";
         
         try (PreparedStatement stmt = databaseManager.getConnection().prepareStatement(sql);
@@ -102,7 +110,7 @@ public class DumpProcessingStore {
     public List<DumpProcessConfig> getEnabledConfigs() {
         List<DumpProcessConfig> configs = new ArrayList<>();
         String sql = "SELECT id, server_name, db_folder, dump_folder, db_type, java_path, " +
-                     "threshold_minutes, admin_user, enabled, last_run_time, last_run_status, last_run_output " +
+                     "threshold_minutes, admin_user, admin_password, enabled, last_run_time, last_run_status, last_run_output " +
                      "FROM dump_process_config WHERE enabled = TRUE ORDER BY id";
         
         try (PreparedStatement stmt = databaseManager.getConnection().prepareStatement(sql);
@@ -122,7 +130,7 @@ public class DumpProcessingStore {
      */
     public Optional<DumpProcessConfig> getConfigById(int id) {
         String sql = "SELECT id, server_name, db_folder, dump_folder, db_type, java_path, " +
-                     "threshold_minutes, admin_user, enabled, last_run_time, last_run_status, last_run_output " +
+                     "threshold_minutes, admin_user, admin_password, enabled, last_run_time, last_run_status, last_run_output " +
                      "FROM dump_process_config WHERE id = ?";
         
         try (PreparedStatement stmt = databaseManager.getConnection().prepareStatement(sql)) {
@@ -144,7 +152,7 @@ public class DumpProcessingStore {
      */
     public DumpProcessConfig addConfig(DumpProcessConfig config) throws SQLException {
         String sql = "INSERT INTO dump_process_config (server_name, db_folder, dump_folder, db_type, " +
-                     "java_path, threshold_minutes, admin_user, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                     "java_path, threshold_minutes, admin_user, admin_password, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
         try (PreparedStatement stmt = databaseManager.getConnection().prepareStatement(sql, 
                 Statement.RETURN_GENERATED_KEYS)) {
@@ -155,7 +163,8 @@ public class DumpProcessingStore {
             stmt.setString(5, config.getJavaPath());
             stmt.setInt(6, config.getThresholdMinutes());
             stmt.setString(7, config.getAdminUser());
-            stmt.setBoolean(8, config.isEnabled());
+            stmt.setString(8, config.getAdminPassword());
+            stmt.setBoolean(9, config.isEnabled());
             
             stmt.executeUpdate();
             
@@ -174,7 +183,7 @@ public class DumpProcessingStore {
      */
     public boolean updateConfig(DumpProcessConfig config) throws SQLException {
         String sql = "UPDATE dump_process_config SET server_name = ?, db_folder = ?, dump_folder = ?, " +
-                     "db_type = ?, java_path = ?, threshold_minutes = ?, admin_user = ?, enabled = ?, " +
+                     "db_type = ?, java_path = ?, threshold_minutes = ?, admin_user = ?, admin_password = ?, enabled = ?, " +
                      "updated_at = CURRENT_TIMESTAMP WHERE id = ?";
         
         try (PreparedStatement stmt = databaseManager.getConnection().prepareStatement(sql)) {
@@ -185,8 +194,9 @@ public class DumpProcessingStore {
             stmt.setString(5, config.getJavaPath());
             stmt.setInt(6, config.getThresholdMinutes());
             stmt.setString(7, config.getAdminUser());
-            stmt.setBoolean(8, config.isEnabled());
-            stmt.setInt(9, config.getId());
+            stmt.setString(8, config.getAdminPassword());
+            stmt.setBoolean(9, config.isEnabled());
+            stmt.setInt(10, config.getId());
             
             return stmt.executeUpdate() > 0;
         }
@@ -470,6 +480,7 @@ public class DumpProcessingStore {
         config.setJavaPath(rs.getString("java_path"));
         config.setThresholdMinutes(rs.getInt("threshold_minutes"));
         config.setAdminUser(rs.getString("admin_user"));
+        config.setAdminPassword(rs.getString("admin_password"));
         config.setEnabled(rs.getBoolean("enabled"));
         config.setLastRunTime(rs.getString("last_run_time"));
         config.setLastRunStatus(rs.getString("last_run_status"));

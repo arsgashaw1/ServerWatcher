@@ -42,7 +42,9 @@ const dbFolderInput = document.getElementById('dbFolder');
 const dumpFolderInput = document.getElementById('dumpFolder');
 const javaPathInput = document.getElementById('javaPath');
 const thresholdMinutesInput = document.getElementById('thresholdMinutes');
-const adminUserInput = document.getElementById('adminUser');
+const adminUserInput = document.getElementById('suAdminUser');
+const adminPasswordInput = document.getElementById('suAdminPassword');
+const passwordHint = document.getElementById('passwordHint');
 const enabledInput = document.getElementById('enabled');
 const commandPreviewText = document.getElementById('commandPreviewText');
 const validationResult = document.getElementById('validationResult');
@@ -145,7 +147,7 @@ function setupEventListeners() {
     });
     
     // Command preview updates
-    [serverNameInput, dbTypeInput, dbFolderInput, dumpFolderInput, javaPathInput, adminUserInput]
+    [serverNameInput, dbTypeInput, dbFolderInput, dumpFolderInput, javaPathInput, adminUserInput, adminPasswordInput]
         .forEach(input => {
             input.addEventListener('input', updateCommandPreview);
             input.addEventListener('change', updateCommandPreview);
@@ -296,6 +298,11 @@ async function saveConfig() {
         enabled: enabledInput.checked
     };
     
+    // Only include password if provided (allows keeping existing password on edit)
+    if (adminPasswordInput.value) {
+        config.adminPassword = adminPasswordInput.value;
+    }
+    
     const id = configIdInput.value;
     const url = id ? `/dump/configs/${id}` : '/dump/configs';
     const method = id ? 'PUT' : 'POST';
@@ -391,6 +398,11 @@ async function validateConfig() {
         thresholdMinutes: parseInt(thresholdMinutesInput.value) || 1,
         adminUser: adminUserInput.value || null
     };
+    
+    // Include password if provided
+    if (adminPasswordInput.value) {
+        config.adminPassword = adminPasswordInput.value;
+    }
     
     try {
         const response = await fetch('/dump/validate', {
@@ -557,6 +569,8 @@ function openAddModal() {
     configIdInput.value = '';
     enabledInput.checked = true;
     thresholdMinutesInput.value = '1';
+    adminPasswordInput.value = '';
+    passwordHint.style.display = 'none';
     validationResult.style.display = 'none';
     updateCommandPreview();
     configModal.style.display = 'flex';
@@ -575,6 +589,9 @@ function editConfig(id) {
     javaPathInput.value = config.javaPath || '';
     thresholdMinutesInput.value = config.thresholdMinutes || 1;
     adminUserInput.value = config.adminUser || '';
+    adminPasswordInput.value = ''; // Don't populate password for security
+    // Show hint if password is already set
+    passwordHint.style.display = config.hasPassword ? 'block' : 'none';
     enabledInput.checked = config.enabled !== false;
     validationResult.style.display = 'none';
     updateCommandPreview();
@@ -611,6 +628,7 @@ function updateCommandPreview() {
     const dumpFolder = dumpFolderInput.value || '<DUMP_FOLDER>';
     const dbFolder = dbFolderInput.value || '<DB_FOLDER>';
     const adminUser = adminUserInput.value;
+    const hasPassword = adminPasswordInput.value || (passwordHint.style.display !== 'none');
     
     // Quote paths to handle spaces - using single quotes with escaped single quotes within
     const quotePath = (p) => "'" + p.replace(/'/g, "'\\''") + "'";
@@ -619,12 +637,14 @@ function updateCommandPreview() {
     const scriptCommand = `./ExtractMDB.do.sh ${dbType} ${quotePath(javaPath)} ${quotePath(dumpFolder)}`;
     
     let command;
-    if (adminUser) {
-        // Run as specific user: cd, then pipe to su - user
-        command = `cd ${quotePath(dbFolder)} && echo ${quotePath(scriptCommand)} | su - ${adminUser}`;
+    const suTarget = adminUser ? `su - ${adminUser}` : 'su';
+    
+    if (hasPassword) {
+        // With password: printf sends password + command to su stdin
+        command = `cd ${quotePath(dbFolder)} && printf '%s\\n%s\\n' '****' ${quotePath(scriptCommand)} | ${suTarget}`;
     } else {
-        // Run as admin/root: cd, then pipe to su
-        command = `cd ${quotePath(dbFolder)} && echo ${quotePath(scriptCommand)} | su`;
+        // No password: just pipe command to su
+        command = `cd ${quotePath(dbFolder)} && echo ${quotePath(scriptCommand)} | ${suTarget}`;
     }
     
     commandPreviewText.textContent = command;

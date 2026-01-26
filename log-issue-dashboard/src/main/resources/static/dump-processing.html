@@ -258,9 +258,21 @@
                                 <small class="form-help">Wait time before processing (default: 1 min)</small>
                             </div>
                             <div class="form-group">
-                                <label for="adminUser">Admin User (for su)</label>
-                                <input type="text" id="adminUser" placeholder="Optional admin user">
-                                <small class="form-help">Leave empty to run without su</small>
+                                <label for="suAdminUser">Admin User (for su)</label>
+                                <input type="text" id="suAdminUser" placeholder="Optional admin user">
+                                <small class="form-help">Leave empty to run as current user via su</small>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="suAdminPassword">Admin Password (for su)</label>
+                                <input type="password" id="suAdminPassword" placeholder="Password for su authentication">
+                                <small class="form-help">Password sent to su stdin</small>
+                            </div>
+                            <div class="form-group password-hint" id="passwordHint" style="display: none;">
+                                <small class="form-help" style="color: var(--warning-color);">
+                                    <strong>Note:</strong> A password is already set. Leave blank to keep it unchanged.
+                                </small>
                             </div>
                         </div>
                         <div class="form-group">

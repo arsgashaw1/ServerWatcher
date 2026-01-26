@@ -486,6 +486,7 @@ public class DumpProcessServlet extends HttpServlet {
         config.setJavaPath(getStringOrDefault(json, "javaPath", ""));
         config.setThresholdMinutes(getIntOrDefault(json, "thresholdMinutes", 1));
         config.setAdminUser(getStringOrDefault(json, "adminUser", null));
+        config.setAdminPassword(getStringOrDefault(json, "adminPassword", null));
         config.setEnabled(getBooleanOrDefault(json, "enabled", true));
         return config;
     }
@@ -512,6 +513,9 @@ public class DumpProcessServlet extends HttpServlet {
         }
         if (json.has("adminUser")) {
             config.setAdminUser(json.get("adminUser").isJsonNull() ? null : json.get("adminUser").getAsString());
+        }
+        if (json.has("adminPassword")) {
+            config.setAdminPassword(json.get("adminPassword").isJsonNull() ? null : json.get("adminPassword").getAsString());
         }
         if (json.has("enabled") && !json.get("enabled").isJsonNull()) {
             config.setEnabled(json.get("enabled").getAsBoolean());
@@ -550,6 +554,8 @@ public class DumpProcessServlet extends HttpServlet {
         map.put("javaPath", config.getJavaPath());
         map.put("thresholdMinutes", config.getThresholdMinutes());
         map.put("adminUser", config.getAdminUser());
+        // Don't expose the actual password, just indicate if one is set
+        map.put("hasPassword", config.getAdminPassword() != null && !config.getAdminPassword().isEmpty());
         map.put("enabled", config.isEnabled());
         map.put("lastRunTime", config.getLastRunTime());
         map.put("lastRunStatus", config.getLastRunStatus());

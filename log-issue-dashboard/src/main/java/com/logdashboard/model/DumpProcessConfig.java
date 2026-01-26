@@ -19,6 +19,7 @@ public class DumpProcessConfig {
     private String javaPath;         // Path to Java installation
     private int thresholdMinutes;    // How long before triggering (default: 1)
     private String adminUser;        // Optional: run as this user via 'su'
+    private String adminPassword;    // Optional: password for su authentication
     private boolean enabled;         // Enable/disable processing
     private String lastRunTime;      // Last execution timestamp (ISO format)
     private String lastRunStatus;    // SUCCESS, FAILED, RUNNING, null
@@ -87,23 +88,31 @@ public class DumpProcessConfig {
      * Builds the full command with su for elevated privileges.
      * Uses z/OS compatible syntax:
      * - cd to dbFolder first
-     * - Then pipe the script command to su (which enters admin mode)
+     * - Then pipe password (if provided) and script command to su
      * - If adminUser is set: su - <adminUser>
      * - If adminUser is empty: su (enters root/admin mode)
      * Paths are properly quoted to handle spaces and special characters.
      */
     public String buildFullCommand() {
         String baseCommand = buildCommand();
+        boolean hasUser = adminUser != null && !adminUser.trim().isEmpty();
+        boolean hasPassword = adminPassword != null && !adminPassword.isEmpty();
         
-        if (adminUser != null && !adminUser.trim().isEmpty()) {
-            // Run as specific user: cd to dir, then pipe command to su - user
-            return String.format("cd %s && echo %s | su - %s", 
-                shellQuote(dbFolder), shellQuote(baseCommand), adminUser.trim());
+        String suTarget = hasUser ? "su - " + adminUser.trim() : "su";
+        
+        if (hasPassword) {
+            // Use printf to send password followed by command
+            // printf sends: password\ncommand\n to su's stdin
+            return String.format("cd %s && printf '%%s\\n%%s\\n' %s %s | %s", 
+                shellQuote(dbFolder), 
+                shellQuote(adminPassword), 
+                shellQuote(baseCommand), 
+                suTarget);
         }
         
-        // Run as root/admin: cd to dir, then pipe command to su
-        return String.format("cd %s && echo %s | su", 
-            shellQuote(dbFolder), shellQuote(baseCommand));
+        // No password - just pipe the command (for cases where password not required)
+        return String.format("cd %s && echo %s | %s", 
+            shellQuote(dbFolder), shellQuote(baseCommand), suTarget);
     }
     
     // Getters and Setters
@@ -171,6 +180,14 @@ public class DumpProcessConfig {
     
     public void setAdminUser(String adminUser) {
         this.adminUser = adminUser;
+    }
+    
+    public String getAdminPassword() {
+        return adminPassword;
+    }
+    
+    public void setAdminPassword(String adminPassword) {
+        this.adminPassword = adminPassword;
     }
     
     public boolean isEnabled() {
