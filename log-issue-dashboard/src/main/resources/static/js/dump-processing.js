@@ -102,9 +102,9 @@ function setupEventListeners() {
             adminForm.style.display === 'none' ? '▼' : '▲';
     });
     
-    // Login
-    loginBtn.addEventListener('click', validateCredentials);
-    adminPassword.addEventListener('keypress', (e) => {
+    // Login (if admin elements exist)
+    if (loginBtn) loginBtn.addEventListener('click', validateCredentials);
+    if (adminPassword) adminPassword.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') validateCredentials();
     });
     
@@ -148,6 +148,7 @@ function setupEventListeners() {
     
     // Command preview updates
     [serverNameInput, dbTypeInput, dbFolderInput, dumpFolderInput, javaPathInput, adminUserInput, adminPasswordInput]
+        .filter(input => input !== null)
         .forEach(input => {
             input.addEventListener('input', updateCommandPreview);
             input.addEventListener('change', updateCommandPreview);
@@ -569,8 +570,8 @@ function openAddModal() {
     configIdInput.value = '';
     enabledInput.checked = true;
     thresholdMinutesInput.value = '1';
-    adminPasswordInput.value = '';
-    passwordHint.style.display = 'none';
+    if (adminPasswordInput) adminPasswordInput.value = '';
+    if (passwordHint) passwordHint.style.display = 'none';
     validationResult.style.display = 'none';
     updateCommandPreview();
     configModal.style.display = 'flex';
@@ -588,10 +589,10 @@ function editConfig(id) {
     dumpFolderInput.value = config.dumpFolder || '';
     javaPathInput.value = config.javaPath || '';
     thresholdMinutesInput.value = config.thresholdMinutes || 1;
-    adminUserInput.value = config.adminUser || '';
-    adminPasswordInput.value = ''; // Don't populate password for security
+    if (adminUserInput) adminUserInput.value = config.adminUser || '';
+    if (adminPasswordInput) adminPasswordInput.value = ''; // Don't populate password for security
     // Show hint if password is already set
-    passwordHint.style.display = config.hasPassword ? 'block' : 'none';
+    if (passwordHint) passwordHint.style.display = config.hasPassword ? 'block' : 'none';
     enabledInput.checked = config.enabled !== false;
     validationResult.style.display = 'none';
     updateCommandPreview();
@@ -623,12 +624,13 @@ function showOutputById(fileId) {
 }
 
 function updateCommandPreview() {
-    const dbType = dbTypeInput.value || '<DB_TYPE>';
-    const javaPath = javaPathInput.value || '<JAVA_PATH>';
-    const dumpFolder = dumpFolderInput.value || '<DUMP_FOLDER>';
-    const dbFolder = dbFolderInput.value || '<DB_FOLDER>';
-    const adminUser = adminUserInput.value;
-    const hasPassword = adminPasswordInput.value || (passwordHint.style.display !== 'none');
+    const dbType = dbTypeInput ? dbTypeInput.value || '<DB_TYPE>' : '<DB_TYPE>';
+    const javaPath = javaPathInput ? javaPathInput.value || '<JAVA_PATH>' : '<JAVA_PATH>';
+    const dumpFolder = dumpFolderInput ? dumpFolderInput.value || '<DUMP_FOLDER>' : '<DUMP_FOLDER>';
+    const dbFolder = dbFolderInput ? dbFolderInput.value || '<DB_FOLDER>' : '<DB_FOLDER>';
+    const adminUser = adminUserInput ? adminUserInput.value : '';
+    const hasPassword = (adminPasswordInput && adminPasswordInput.value) || 
+                        (passwordHint && passwordHint.style.display !== 'none');
     
     // Quote paths to handle spaces - using single quotes with escaped single quotes within
     const quotePath = (p) => "'" + p.replace(/'/g, "'\\''") + "'";
@@ -647,7 +649,7 @@ function updateCommandPreview() {
         command = `cd ${quotePath(dbFolder)} && echo ${quotePath(scriptCommand)} | ${suTarget}`;
     }
     
-    commandPreviewText.textContent = command;
+    if (commandPreviewText) commandPreviewText.textContent = command;
 }
 
 // Helper Functions
