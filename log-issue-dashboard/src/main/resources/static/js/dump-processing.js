@@ -117,8 +117,20 @@ function setupEventListeners() {
     // Modal controls
     if (modalClose) modalClose.addEventListener('click', closeModal);
     if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
-    if (saveBtn) saveBtn.addEventListener('click', saveConfig);
-    if (validateBtn) validateBtn.addEventListener('click', validateConfig);
+    if (saveBtn) saveBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        saveConfig();
+    });
+    if (validateBtn) validateBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        validateConfig();
+    });
+    
+    // Prevent form submission (which would refresh the page)
+    if (configForm) configForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveConfig();
+    });
     
     // Delete modal
     if (deleteModalClose) deleteModalClose.addEventListener('click', closeDeleteModal);
@@ -289,6 +301,8 @@ async function validateCredentials() {
 }
 
 async function saveConfig() {
+    console.log('Save button clicked');
+    
     const config = {
         serverName: serverNameInput ? serverNameInput.value : '',
         dbType: dbTypeInput ? dbTypeInput.value : '',
@@ -299,9 +313,13 @@ async function saveConfig() {
         enabled: enabledInput ? enabledInput.checked : true
     };
     
-    const id = configIdInput.value;
+    console.log('Saving config:', config);
+    
+    const id = configIdInput ? configIdInput.value : '';
     const url = id ? `/dump/configs/${id}` : '/dump/configs';
     const method = id ? 'PUT' : 'POST';
+    
+    console.log('URL:', url, 'Method:', method);
     
     try {
         const response = await fetch(url, {
@@ -313,17 +331,19 @@ async function saveConfig() {
         });
         
         const data = await response.json();
+        console.log('Save response:', data);
         
         if (response.ok) {
             closeModal();
             loadConfigs();
             loadStatus();
+            alert('Configuration saved successfully!');
         } else {
             alert(data.error || 'Failed to save configuration');
         }
     } catch (error) {
         console.error('Error saving config:', error);
-        alert('Error saving configuration');
+        alert('Error saving configuration: ' + error.message);
     }
 }
 
