@@ -72,21 +72,25 @@ public class DumpProcessConfig {
     }
     
     /**
-     * Builds the full command with optional su wrapper.
-     * If adminUser is set: su - <adminUser> -c "cd <dbFolder> && <command>"
-     * Otherwise: cd <dbFolder> && <command>
+     * Builds the full command with su wrapper.
+     * Always runs with su for elevated privileges:
+     * - If adminUser is set: su - <adminUser> -c "cd <dbFolder> && <command>"
+     * - If adminUser is empty: su -c "cd <dbFolder> && <command>" (runs as root)
      */
     public String buildFullCommand() {
         String baseCommand = buildCommand();
         String cdAndRun = String.format("cd %s && %s", dbFolder, baseCommand);
         
+        // Escape double quotes in the command for the su wrapper
+        String escapedCommand = cdAndRun.replace("\"", "\\\"");
+        
         if (adminUser != null && !adminUser.trim().isEmpty()) {
-            // Escape double quotes in the command for the su wrapper
-            String escapedCommand = cdAndRun.replace("\"", "\\\"");
+            // Run as specific user
             return String.format("su - %s -c \"%s\"", adminUser.trim(), escapedCommand);
         }
         
-        return cdAndRun;
+        // Run as root (default)
+        return String.format("su -c \"%s\"", escapedCommand);
     }
     
     // Getters and Setters

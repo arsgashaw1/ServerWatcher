@@ -56,19 +56,9 @@ public class DumpScriptExecutor {
         
         Process process = null;
         try {
-            ProcessBuilder processBuilder;
-            
-            if (config.getAdminUser() != null && !config.getAdminUser().trim().isEmpty()) {
-                // Execute with su
-                String command = config.buildFullCommand();
-                processBuilder = new ProcessBuilder("/bin/sh", "-c", command);
-            } else {
-                // Execute directly
-                processBuilder = new ProcessBuilder(
-                    "/bin/sh", "-c",
-                    "cd " + config.getDbFolder() + " && " + config.buildCommand()
-                );
-            }
+            // Always execute with su (runs as root by default, or as specified adminUser)
+            String command = config.buildFullCommand();
+            ProcessBuilder processBuilder = new ProcessBuilder("/bin/sh", "-c", command);
             
             // Redirect error stream to output stream
             processBuilder.redirectErrorStream(true);
