@@ -1,0 +1,604 @@
+// Dump Processing Management JavaScript
+
+// State
+let isAdmin = false;
+let adminCredentials = { username: '', password: '' };
+let configs = [];
+let selectedConfigId = null;
+let deleteConfigId = null;
+
+// DOM Elements
+const configTableBody = document.getElementById('configTableBody');
+const filesTableBody = document.getElementById('filesTableBody');
+const filesSection = document.getElementById('filesSection');
+const selectedConfigName = document.getElementById('selectedConfigName');
+
+// Status elements
+const watcherStatus = document.getElementById('watcherStatus');
+const configCount = document.getElementById('configCount');
+const pendingCount = document.getElementById('pendingCount');
+const processingCount = document.getElementById('processingCount');
+const completedCount = document.getElementById('completedCount');
+const failedCount = document.getElementById('failedCount');
+
+// Admin elements
+const adminSection = document.getElementById('adminSection');
+const adminToggle = document.getElementById('adminToggle');
+const adminForm = document.getElementById('adminForm');
+const adminStatus = document.getElementById('adminStatus');
+const adminUsername = document.getElementById('adminUsername');
+const adminPassword = document.getElementById('adminPassword');
+const loginBtn = document.getElementById('loginBtn');
+
+// Modal elements
+const configModal = document.getElementById('configModal');
+const modalTitle = document.getElementById('modalTitle');
+const configForm = document.getElementById('configForm');
+const configIdInput = document.getElementById('configId');
+const serverNameInput = document.getElementById('serverName');
+const dbTypeInput = document.getElementById('dbType');
+const dbFolderInput = document.getElementById('dbFolder');
+const dumpFolderInput = document.getElementById('dumpFolder');
+const javaPathInput = document.getElementById('javaPath');
+const thresholdMinutesInput = document.getElementById('thresholdMinutes');
+const adminUserInput = document.getElementById('adminUser');
+const enabledInput = document.getElementById('enabled');
+const commandPreviewText = document.getElementById('commandPreviewText');
+const validationResult = document.getElementById('validationResult');
+
+// Buttons
+const addConfigBtn = document.getElementById('addConfigBtn');
+const modalClose = document.getElementById('modalClose');
+const cancelBtn = document.getElementById('cancelBtn');
+const saveBtn = document.getElementById('saveBtn');
+const validateBtn = document.getElementById('validateBtn');
+const closeFilesBtn = document.getElementById('closeFilesBtn');
+
+// Delete modal
+const deleteModal = document.getElementById('deleteModal');
+const deleteModalClose = document.getElementById('deleteModalClose');
+const deleteCancelBtn = document.getElementById('deleteCancelBtn');
+const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
+
+// Output modal
+const outputModal = document.getElementById('outputModal');
+const outputModalClose = document.getElementById('outputModalClose');
+const outputContent = document.getElementById('outputContent');
+const outputCloseBtn = document.getElementById('outputCloseBtn');
+
+// Theme toggle
+const themeToggle = document.getElementById('themeToggle');
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    loadConfigs();
+    loadStatus();
+    setupEventListeners();
+    loadTheme();
+    
+    // Auto-refresh status every 30 seconds
+    setInterval(loadStatus, 30000);
+    
+    // Auto-refresh configs every 60 seconds
+    setInterval(loadConfigs, 60000);
+    
+    // Check for saved credentials
+    const savedCreds = sessionStorage.getItem('adminCredentials');
+    if (savedCreds) {
+        const creds = JSON.parse(savedCreds);
+        adminUsername.value = creds.username;
+        adminPassword.value = creds.password;
+        validateCredentials();
+    }
+});
+
+function setupEventListeners() {
+    // Admin toggle
+    adminToggle.addEventListener('click', () => {
+        adminForm.style.display = adminForm.style.display === 'none' ? 'block' : 'none';
+        adminToggle.querySelector('.toggle-icon').textContent = 
+            adminForm.style.display === 'none' ? '▼' : '▲';
+    });
+    
+    // Login
+    loginBtn.addEventListener('click', validateCredentials);
+    adminPassword.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') validateCredentials();
+    });
+    
+    // Add config
+    addConfigBtn.addEventListener('click', () => {
+        if (!isAdmin) {
+            showAdminRequired();
+            return;
+        }
+        openAddModal();
+    });
+    
+    // Modal controls
+    modalClose.addEventListener('click', closeModal);
+    cancelBtn.addEventListener('click', closeModal);
+    saveBtn.addEventListener('click', saveConfig);
+    validateBtn.addEventListener('click', validateConfig);
+    
+    // Delete modal
+    deleteModalClose.addEventListener('click', closeDeleteModal);
+    deleteCancelBtn.addEventListener('click', closeDeleteModal);
+    deleteConfirmBtn.addEventListener('click', confirmDelete);
+    
+    // Output modal
+    outputModalClose.addEventListener('click', closeOutputModal);
+    outputCloseBtn.addEventListener('click', closeOutputModal);
+    
+    // Files section
+    closeFilesBtn.addEventListener('click', () => {
+        filesSection.style.display = 'none';
+        selectedConfigId = null;
+    });
+    
+    // Command preview updates
+    [serverNameInput, dbTypeInput, dbFolderInput, dumpFolderInput, javaPathInput, adminUserInput]
+        .forEach(input => {
+            input.addEventListener('input', updateCommandPreview);
+            input.addEventListener('change', updateCommandPreview);
+        });
+    
+    // Theme toggle
+    themeToggle.addEventListener('click', toggleTheme);
+    
+    // Close modals on outside click
+    window.addEventListener('click', (e) => {
+        if (e.target === configModal) closeModal();
+        if (e.target === deleteModal) closeDeleteModal();
+        if (e.target === outputModal) closeOutputModal();
+    });
+}
+
+// API Functions
+async function loadConfigs() {
+    try {
+        const response = await fetch('/dump/configs');
+        const data = await response.json();
+        configs = data.configs || [];
+        renderConfigs();
+    } catch (error) {
+        console.error('Error loading configs:', error);
+    }
+}
+
+async function loadStatus() {
+    try {
+        const response = await fetch('/dump/status');
+        const data = await response.json();
+        
+        watcherStatus.textContent = data.watcherRunning ? 'Running' : 'Stopped';
+        watcherStatus.style.color = data.watcherRunning ? 'var(--success-color)' : 'var(--danger-color)';
+        configCount.textContent = `${data.enabledConfigCount}/${data.configCount}`;
+        pendingCount.textContent = data.totalPending;
+        processingCount.textContent = data.currentlyProcessing;
+        completedCount.textContent = data.totalCompleted;
+        failedCount.textContent = data.totalFailed;
+    } catch (error) {
+        console.error('Error loading status:', error);
+    }
+}
+
+async function loadFilesForConfig(configId) {
+    try {
+        const response = await fetch(`/dump/configs/${configId}/files`);
+        const data = await response.json();
+        selectedConfigName.textContent = data.serverName;
+        renderFiles(data.files || []);
+        filesSection.style.display = 'block';
+        selectedConfigId = configId;
+    } catch (error) {
+        console.error('Error loading files:', error);
+    }
+}
+
+async function validateCredentials() {
+    const username = adminUsername.value;
+    const password = adminPassword.value;
+    
+    if (!username || !password) {
+        showAdminStatus('Please enter username and password', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/infra/auth/validate', {
+            headers: {
+                'X-Admin-Username': username,
+                'X-Admin-Password': password
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.valid) {
+            isAdmin = true;
+            adminCredentials = { username, password };
+            sessionStorage.setItem('adminCredentials', JSON.stringify(adminCredentials));
+            showAdminStatus('Logged in successfully', 'success');
+            showAdminColumns();
+            loadConfigs();
+        } else {
+            isAdmin = false;
+            showAdminStatus(data.error || 'Invalid credentials', 'error');
+        }
+    } catch (error) {
+        console.error('Error validating credentials:', error);
+        showAdminStatus('Error validating credentials', 'error');
+    }
+}
+
+async function saveConfig() {
+    if (!isAdmin) {
+        showAdminRequired();
+        return;
+    }
+    
+    const config = {
+        serverName: serverNameInput.value,
+        dbType: dbTypeInput.value,
+        dbFolder: dbFolderInput.value,
+        dumpFolder: dumpFolderInput.value,
+        javaPath: javaPathInput.value,
+        thresholdMinutes: parseInt(thresholdMinutesInput.value) || 1,
+        adminUser: adminUserInput.value || null,
+        enabled: enabledInput.checked
+    };
+    
+    const id = configIdInput.value;
+    const url = id ? `/dump/configs/${id}` : '/dump/configs';
+    const method = id ? 'PUT' : 'POST';
+    
+    try {
+        const response = await fetch(url, {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Admin-Username': adminCredentials.username,
+                'X-Admin-Password': adminCredentials.password
+            },
+            body: JSON.stringify(config)
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            closeModal();
+            loadConfigs();
+            loadStatus();
+        } else {
+            alert(data.error || 'Failed to save configuration');
+        }
+    } catch (error) {
+        console.error('Error saving config:', error);
+        alert('Error saving configuration');
+    }
+}
+
+async function deleteConfig(id) {
+    deleteConfigId = id;
+    deleteModal.style.display = 'flex';
+}
+
+async function confirmDelete() {
+    if (!deleteConfigId) return;
+    
+    try {
+        const response = await fetch(`/dump/configs/${deleteConfigId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-Admin-Username': adminCredentials.username,
+                'X-Admin-Password': adminCredentials.password
+            }
+        });
+        
+        if (response.ok) {
+            closeDeleteModal();
+            loadConfigs();
+            loadStatus();
+            if (selectedConfigId === deleteConfigId) {
+                filesSection.style.display = 'none';
+                selectedConfigId = null;
+            }
+        } else {
+            const data = await response.json();
+            alert(data.error || 'Failed to delete configuration');
+        }
+    } catch (error) {
+        console.error('Error deleting config:', error);
+        alert('Error deleting configuration');
+    }
+}
+
+async function triggerProcessing(configId) {
+    if (!isAdmin) {
+        showAdminRequired();
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/dump/configs/${configId}/run`, {
+            method: 'POST',
+            headers: {
+                'X-Admin-Username': adminCredentials.username,
+                'X-Admin-Password': adminCredentials.password
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            alert(data.message || 'Processing triggered');
+            setTimeout(() => {
+                loadConfigs();
+                loadStatus();
+                if (selectedConfigId === configId) {
+                    loadFilesForConfig(configId);
+                }
+            }, 2000);
+        } else {
+            alert(data.error || 'Failed to trigger processing');
+        }
+    } catch (error) {
+        console.error('Error triggering processing:', error);
+        alert('Error triggering processing');
+    }
+}
+
+async function validateConfig() {
+    const config = {
+        serverName: serverNameInput.value,
+        dbType: dbTypeInput.value,
+        dbFolder: dbFolderInput.value,
+        dumpFolder: dumpFolderInput.value,
+        javaPath: javaPathInput.value,
+        thresholdMinutes: parseInt(thresholdMinutesInput.value) || 1,
+        adminUser: adminUserInput.value || null
+    };
+    
+    try {
+        const response = await fetch('/dump/validate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Admin-Username': adminCredentials.username,
+                'X-Admin-Password': adminCredentials.password
+            },
+            body: JSON.stringify(config)
+        });
+        
+        const data = await response.json();
+        
+        validationResult.style.display = 'block';
+        if (data.valid) {
+            validationResult.className = 'validation-result success';
+            validationResult.textContent = '✓ Configuration is valid';
+        } else {
+            validationResult.className = 'validation-result error';
+            validationResult.textContent = '✗ ' + (data.error || 'Invalid configuration');
+        }
+    } catch (error) {
+        console.error('Error validating config:', error);
+        validationResult.style.display = 'block';
+        validationResult.className = 'validation-result error';
+        validationResult.textContent = '✗ Error validating configuration';
+    }
+}
+
+// Render Functions
+function renderConfigs() {
+    if (!configs || configs.length === 0) {
+        configTableBody.innerHTML = `
+            <tr class="empty-row">
+                <td colspan="8">
+                    <div class="empty-state">
+                        <div class="empty-icon">📦</div>
+                        <p>No dump processing configurations yet</p>
+                    </div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    configTableBody.innerHTML = configs.map((config, index) => `
+        <tr class="clickable-row" onclick="loadFilesForConfig(${config.id})">
+            <td>${index + 1}</td>
+            <td>${escapeHtml(config.serverName)}</td>
+            <td>${escapeHtml(config.dbType)}</td>
+            <td class="cell-truncate" title="${escapeHtml(config.dumpFolder)}">${escapeHtml(config.dumpFolder)}</td>
+            <td>${config.thresholdMinutes} min</td>
+            <td>
+                <span class="status-badge ${config.enabled ? 'enabled' : 'disabled'}">
+                    ${config.enabled ? 'Enabled' : 'Disabled'}
+                </span>
+                ${config.stats ? `
+                    <br><small style="color: var(--text-muted)">
+                        P:${config.stats.pending} / C:${config.stats.completed} / F:${config.stats.failed}
+                    </small>
+                ` : ''}
+            </td>
+            <td>
+                ${config.lastRunTime ? `
+                    <span class="last-run-info ${config.lastRunStatus === 'SUCCESS' ? 'success' : 'failed'}">
+                        ${formatDate(config.lastRunTime)}<br>
+                        ${config.lastRunStatus || '--'}
+                    </span>
+                ` : '<span class="last-run-info">Never</span>'}
+            </td>
+            <td class="admin-only" style="${isAdmin ? '' : 'display: none;'}" onclick="event.stopPropagation()">
+                <div class="action-buttons">
+                    <button class="btn btn-icon-sm btn-run" onclick="triggerProcessing(${config.id})" title="Run Now">▶</button>
+                    <button class="btn btn-icon-sm btn-secondary" onclick="editConfig(${config.id})" title="Edit">✏️</button>
+                    <button class="btn btn-icon-sm btn-danger" onclick="deleteConfig(${config.id})" title="Delete">🗑️</button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function renderFiles(files) {
+    if (!files || files.length === 0) {
+        filesTableBody.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 2rem;">
+                    No files tracked for this configuration
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    filesTableBody.innerHTML = files.map(file => `
+        <tr>
+            <td>${escapeHtml(file.fileName)}</td>
+            <td>${formatFileSize(file.fileSize)}</td>
+            <td>${file.ageMinutes} min</td>
+            <td>
+                <span class="status-badge ${file.status.toLowerCase()}">
+                    ${file.status}
+                </span>
+            </td>
+            <td>${file.retryCount}</td>
+            <td>
+                ${file.processOutput ? `
+                    <button class="btn btn-sm btn-secondary" onclick='showOutput(${JSON.stringify(file.processOutput)})'>
+                        View
+                    </button>
+                ` : '--'}
+            </td>
+        </tr>
+    `).join('');
+}
+
+// Modal Functions
+function openAddModal() {
+    modalTitle.textContent = 'Add Dump Processing Configuration';
+    configForm.reset();
+    configIdInput.value = '';
+    enabledInput.checked = true;
+    thresholdMinutesInput.value = '1';
+    validationResult.style.display = 'none';
+    updateCommandPreview();
+    configModal.style.display = 'flex';
+}
+
+function editConfig(id) {
+    const config = configs.find(c => c.id === id);
+    if (!config) return;
+    
+    modalTitle.textContent = 'Edit Dump Processing Configuration';
+    configIdInput.value = config.id;
+    serverNameInput.value = config.serverName || '';
+    dbTypeInput.value = config.dbType || '';
+    dbFolderInput.value = config.dbFolder || '';
+    dumpFolderInput.value = config.dumpFolder || '';
+    javaPathInput.value = config.javaPath || '';
+    thresholdMinutesInput.value = config.thresholdMinutes || 1;
+    adminUserInput.value = config.adminUser || '';
+    enabledInput.checked = config.enabled !== false;
+    validationResult.style.display = 'none';
+    updateCommandPreview();
+    configModal.style.display = 'flex';
+}
+
+function closeModal() {
+    configModal.style.display = 'none';
+    configForm.reset();
+}
+
+function closeDeleteModal() {
+    deleteModal.style.display = 'none';
+    deleteConfigId = null;
+}
+
+function closeOutputModal() {
+    outputModal.style.display = 'none';
+}
+
+function showOutput(output) {
+    outputContent.textContent = output || 'No output available';
+    outputModal.style.display = 'flex';
+}
+
+function updateCommandPreview() {
+    const dbType = dbTypeInput.value || '<DB_TYPE>';
+    const javaPath = javaPathInput.value || '<JAVA_PATH>';
+    const dumpFolder = dumpFolderInput.value || '<DUMP_FOLDER>';
+    const dbFolder = dbFolderInput.value || '<DB_FOLDER>';
+    const adminUser = adminUserInput.value;
+    
+    let command = `cd ${dbFolder} && ./ExtractMDB.do.sh ${dbType} ${javaPath} ${dumpFolder}`;
+    
+    if (adminUser) {
+        command = `su - ${adminUser} -c "${command}"`;
+    }
+    
+    commandPreviewText.textContent = command;
+}
+
+// Helper Functions
+function showAdminStatus(message, type) {
+    adminStatus.textContent = message;
+    adminStatus.className = 'admin-status ' + type;
+    adminStatus.style.display = 'block';
+}
+
+function showAdminRequired() {
+    adminForm.style.display = 'block';
+    adminToggle.querySelector('.toggle-icon').textContent = '▲';
+    showAdminStatus('Admin login required for this action', 'error');
+}
+
+function showAdminColumns() {
+    document.querySelectorAll('.admin-only').forEach(el => {
+        el.style.display = '';
+    });
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '--';
+    try {
+        const date = new Date(dateStr);
+        return date.toLocaleString();
+    } catch {
+        return dateStr;
+    }
+}
+
+function formatFileSize(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// Theme
+function loadTheme() {
+    const theme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    themeToggle.textContent = theme === 'dark' ? '☀️' : '🌙';
+}
+
+function toggleTheme() {
+    const currentTheme = document.documentElement.getAttribute('data-theme');
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+    themeToggle.textContent = newTheme === 'dark' ? '☀️' : '🌙';
+}
