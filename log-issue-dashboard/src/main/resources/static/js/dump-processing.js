@@ -114,19 +114,19 @@ function setupEventListeners() {
     });
     
     // Modal controls
-    modalClose.addEventListener('click', closeModal);
-    cancelBtn.addEventListener('click', closeModal);
-    saveBtn.addEventListener('click', saveConfig);
-    validateBtn.addEventListener('click', validateConfig);
+    if (modalClose) modalClose.addEventListener('click', closeModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    if (saveBtn) saveBtn.addEventListener('click', saveConfig);
+    if (validateBtn) validateBtn.addEventListener('click', validateConfig);
     
     // Delete modal
-    deleteModalClose.addEventListener('click', closeDeleteModal);
-    deleteCancelBtn.addEventListener('click', closeDeleteModal);
-    deleteConfirmBtn.addEventListener('click', confirmDelete);
+    if (deleteModalClose) deleteModalClose.addEventListener('click', closeDeleteModal);
+    if (deleteCancelBtn) deleteCancelBtn.addEventListener('click', closeDeleteModal);
+    if (deleteConfirmBtn) deleteConfirmBtn.addEventListener('click', confirmDelete);
     
     // Output modal
-    outputModalClose.addEventListener('click', closeOutputModal);
-    outputCloseBtn.addEventListener('click', closeOutputModal);
+    if (outputModalClose) outputModalClose.addEventListener('click', closeOutputModal);
+    if (outputCloseBtn) outputCloseBtn.addEventListener('click', closeOutputModal);
     
     // Files section
     closeFilesBtn.addEventListener('click', () => {
@@ -289,18 +289,18 @@ async function validateCredentials() {
 
 async function saveConfig() {
     const config = {
-        serverName: serverNameInput.value,
-        dbType: dbTypeInput.value,
-        dbFolder: dbFolderInput.value,
-        dumpFolder: dumpFolderInput.value,
-        javaPath: javaPathInput.value,
-        thresholdMinutes: parseInt(thresholdMinutesInput.value) || 1,
-        adminUser: adminUserInput.value || null,
-        enabled: enabledInput.checked
+        serverName: serverNameInput ? serverNameInput.value : '',
+        dbType: dbTypeInput ? dbTypeInput.value : '',
+        dbFolder: dbFolderInput ? dbFolderInput.value : '',
+        dumpFolder: dumpFolderInput ? dumpFolderInput.value : '',
+        javaPath: javaPathInput ? javaPathInput.value : '',
+        thresholdMinutes: parseInt(thresholdMinutesInput ? thresholdMinutesInput.value : '1') || 1,
+        adminUser: (adminUserInput && adminUserInput.value) ? adminUserInput.value : null,
+        enabled: enabledInput ? enabledInput.checked : true
     };
     
     // Only include password if provided (allows keeping existing password on edit)
-    if (adminPasswordInput.value) {
+    if (adminPasswordInput && adminPasswordInput.value) {
         config.adminPassword = adminPasswordInput.value;
     }
     
@@ -391,17 +391,17 @@ async function triggerProcessing(configId) {
 
 async function validateConfig() {
     const config = {
-        serverName: serverNameInput.value,
-        dbType: dbTypeInput.value,
-        dbFolder: dbFolderInput.value,
-        dumpFolder: dumpFolderInput.value,
-        javaPath: javaPathInput.value,
-        thresholdMinutes: parseInt(thresholdMinutesInput.value) || 1,
-        adminUser: adminUserInput.value || null
+        serverName: serverNameInput ? serverNameInput.value : '',
+        dbType: dbTypeInput ? dbTypeInput.value : '',
+        dbFolder: dbFolderInput ? dbFolderInput.value : '',
+        dumpFolder: dumpFolderInput ? dumpFolderInput.value : '',
+        javaPath: javaPathInput ? javaPathInput.value : '',
+        thresholdMinutes: parseInt(thresholdMinutesInput ? thresholdMinutesInput.value : '1') || 1,
+        adminUser: (adminUserInput && adminUserInput.value) ? adminUserInput.value : null
     };
     
     // Include password if provided
-    if (adminPasswordInput.value) {
+    if (adminPasswordInput && adminPasswordInput.value) {
         config.adminPassword = adminPasswordInput.value;
     }
     
