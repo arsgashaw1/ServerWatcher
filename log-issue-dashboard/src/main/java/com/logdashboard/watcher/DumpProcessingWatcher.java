@@ -368,7 +368,20 @@ public class DumpProcessingWatcher {
             for (DumpFileTracking file : files) {
                 try {
                     if (shouldCleanup) {
-                        // True success: delete the tracking record (data is "gone")
+                        // True success: delete the physical dump file from the folder
+                        File dumpFile = new File(file.getFilePath());
+                        if (dumpFile.exists()) {
+                            if (dumpFile.delete()) {
+                                updateStatus("Deleted dump file: " + file.getFileName());
+                            } else {
+                                System.err.println("Warning: Failed to delete dump file: " + file.getFilePath());
+                                updateStatus("Warning: Could not delete dump file: " + file.getFileName());
+                            }
+                        } else {
+                            updateStatus("Dump file already removed: " + file.getFileName());
+                        }
+                        
+                        // Delete the tracking record (data is "gone")
                         store.deleteFileTracking(file.getId());
                         updateStatus("Cleaned up tracking record for: " + file.getFileName());
                     } else {
