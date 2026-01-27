@@ -112,6 +112,9 @@ public class ConfigApiServlet extends HttpServlet {
                 case "/settings":
                     handleGetSettings(out);
                     break;
+                case "/diagnostics":
+                    handleGetDiagnostics(out);
+                    break;
                 default:
                     resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
                     out.write(GSON.toJson(error("Not found: " + pathInfo)));
@@ -146,6 +149,12 @@ public class ConfigApiServlet extends HttpServlet {
                     break;
                 case "/file-patterns/add":
                     handleAddFilePattern(req, out, resp);
+                    break;
+                case "/diagnostics/verbose":
+                    handleToggleVerboseLogging(out, resp);
+                    break;
+                case "/diagnostics/rescan":
+                    handleRescan(out, resp);
                     break;
                 default:
                     resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
@@ -568,6 +577,77 @@ public class ConfigApiServlet extends HttpServlet {
         result.put("storageType", config.getStorageType());
         result.put("databasePath", config.getDatabasePath());
         result.put("requiresAuth", config.hasAdminCredentials());
+        out.write(GSON.toJson(result));
+    }
+    
+    /**
+     * Get diagnostic information about the log file watcher.
+     * Useful for troubleshooting why the watcher might not be working.
+     */
+    private void handleGetDiagnostics(PrintWriter out) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        
+        if (logWatcher != null) {
+            result.put("watcherAvailable", true);
+            result.put("verboseLogging", logWatcher.isVerboseLogging());
+            result.putAll(logWatcher.getDiagnostics());
+        } else {
+            result.put("watcherAvailable", false);
+            result.put("error", "Log file watcher is not initialized");
+        }
+        
+        // Add config info
+        result.put("configPath", configLoader.getConfigFilePath().toString());
+        result.put("configuredServerCount", config.getServers() != null ? config.getServers().size() : 0);
+        result.put("configuredWatchPathCount", config.getWatchPaths() != null ? config.getWatchPaths().size() : 0);
+        
+        // Add pattern info for debugging
+        result.put("exceptionPatterns", config.getExceptionPatterns());
+        result.put("errorPatterns", config.getErrorPatterns());
+        result.put("warningPatterns", config.getWarningPatterns());
+        result.put("exclusionPatterns", config.getExclusionPatterns());
+        
+        out.write(GSON.toJson(result));
+    }
+    
+    /**
+     * Toggle verbose logging for the log file watcher.
+     */
+    private void handleToggleVerboseLogging(PrintWriter out, HttpServletResponse resp) {
+        if (logWatcher == null) {
+            resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            out.write(GSON.toJson(error("Log file watcher is not available")));
+            return;
+        }
+        
+        boolean newState = !logWatcher.isVerboseLogging();
+        logWatcher.setVerboseLogging(newState);
+        
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("verboseLogging", newState);
+        result.put("message", "Verbose logging " + (newState ? "enabled" : "disabled"));
+        
+        out.write(GSON.toJson(result));
+    }
+    
+    /**
+     * Force a rescan of all watched directories.
+     */
+    private void handleRescan(PrintWriter out, HttpServletResponse resp) {
+        if (logWatcher == null) {
+            resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            out.write(GSON.toJson(error("Log file watcher is not available")));
+            return;
+        }
+        
+        logWatcher.rescan();
+        
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("message", "Rescan initiated");
+        result.put("trackedFiles", logWatcher.getTrackedFiles().size());
+        
         out.write(GSON.toJson(result));
     }
     

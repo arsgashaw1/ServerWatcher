@@ -6,7 +6,10 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -21,6 +24,36 @@ public class DumpScriptExecutor {
     // Pattern to detect potentially dangerous characters in paths
     // Includes newline characters to prevent command injection via newlines
     private static final Pattern DANGEROUS_CHARS = Pattern.compile("[;&|`$(){}\\[\\]<>\n\r\u0000]");
+    
+    // Patterns to detect exceptions and errors in output that indicate failure
+    // even if exit code is 0
+    private static final Pattern[] EXCEPTION_PATTERNS = {
+        // Java exceptions
+        Pattern.compile("(?i)Exception\\s*:", Pattern.MULTILINE),
+        Pattern.compile("(?i)^\\s*at\\s+[\\w.$]+\\([^)]+\\)\\s*$", Pattern.MULTILINE), // Stack trace line
+        Pattern.compile("(?i)java\\.lang\\.\\w*Exception", Pattern.MULTILINE),
+        Pattern.compile("(?i)java\\.io\\.\\w*Exception", Pattern.MULTILINE),
+        Pattern.compile("(?i)java\\.sql\\.\\w*Exception", Pattern.MULTILINE),
+        // SQL errors
+        Pattern.compile("(?i)SQL\\s*Error", Pattern.MULTILINE),
+        Pattern.compile("(?i)SQLSTATE", Pattern.MULTILINE),
+        // General error patterns
+        Pattern.compile("(?i)^ERROR[:\\s]", Pattern.MULTILINE),
+        Pattern.compile("(?i)\\bFATAL\\b", Pattern.MULTILINE),
+        Pattern.compile("(?i)\\bOOM\\b|OutOfMemory", Pattern.MULTILINE),
+        Pattern.compile("(?i)NullPointerException", Pattern.MULTILINE),
+        Pattern.compile("(?i)ArrayIndexOutOfBoundsException", Pattern.MULTILINE),
+        Pattern.compile("(?i)ClassNotFoundException", Pattern.MULTILINE),
+        Pattern.compile("(?i)NoSuchMethodException", Pattern.MULTILINE),
+        Pattern.compile("(?i)FileNotFoundException", Pattern.MULTILINE),
+        Pattern.compile("(?i)IOException", Pattern.MULTILINE),
+        Pattern.compile("(?i)SQLException", Pattern.MULTILINE),
+        // Datacom/MDB specific errors
+        Pattern.compile("(?i)extraction\\s+failed", Pattern.MULTILINE),
+        Pattern.compile("(?i)database\\s+error", Pattern.MULTILINE),
+        Pattern.compile("(?i)connection\\s+failed", Pattern.MULTILINE),
+        Pattern.compile("(?i)unable\\s+to\\s+(open|read|write|connect)", Pattern.MULTILINE)
+    };
     
     private final long timeoutMinutes;
     
@@ -209,6 +242,50 @@ public class DumpScriptExecutor {
     }
     
     /**
+     * Checks if the output contains exception patterns that indicate failure.
+     * This is used to detect failures even when exit code is 0.
+     * 
+     * @param output The script output to check
+     * @return List of detected exception patterns/messages
+     */
+    public static List<String> detectExceptionsInOutput(String output) {
+        List<String> exceptions = new ArrayList<>();
+        if (output == null || output.isEmpty()) {
+            return exceptions;
+        }
+        
+        for (Pattern pattern : EXCEPTION_PATTERNS) {
+            Matcher matcher = pattern.matcher(output);
+            if (matcher.find()) {
+                // Extract a snippet of the matched content
+                String match = matcher.group();
+                // Limit the snippet size
+                if (match.length() > 100) {
+                    match = match.substring(0, 100) + "...";
+                }
+                exceptions.add(match.trim());
+                
+                // Limit total exceptions found to prevent huge lists
+                if (exceptions.size() >= 10) {
+                    break;
+                }
+            }
+        }
+        
+        return exceptions;
+    }
+    
+    /**
+     * Checks if the output indicates a clean completion without exceptions.
+     * 
+     * @param output The script output to check
+     * @return true if output contains no exception patterns
+     */
+    public static boolean isOutputClean(String output) {
+        return detectExceptionsInOutput(output).isEmpty();
+    }
+    
+    /**
      * Result of script execution.
      */
     public static class ExecutionResult {
@@ -216,12 +293,17 @@ public class DumpScriptExecutor {
         private final String output;
         private final long durationMillis;
         private final boolean timedOut;
+        private final List<String> detectedExceptions;
+        private final boolean outputClean;
         
         public ExecutionResult(int exitCode, String output, long durationMillis, boolean timedOut) {
             this.exitCode = exitCode;
             this.output = output;
             this.durationMillis = durationMillis;
             this.timedOut = timedOut;
+            // Analyze output for exceptions
+            this.detectedExceptions = detectExceptionsInOutput(output);
+            this.outputClean = this.detectedExceptions.isEmpty();
         }
         
         public int getExitCode() {
@@ -240,13 +322,66 @@ public class DumpScriptExecutor {
             return timedOut;
         }
         
+        /**
+         * Returns true if the output contains no exception patterns.
+         */
+        public boolean isOutputClean() {
+            return outputClean;
+        }
+        
+        /**
+         * Returns the list of detected exception patterns in the output.
+         */
+        public List<String> getDetectedExceptions() {
+            return detectedExceptions;
+        }
+        
+        /**
+         * Returns true if the execution was successful AND output is clean.
+         * A true success requires:
+         * - Exit code 0
+         * - Not timed out
+         * - No exceptions detected in output
+         */
         public boolean isSuccess() {
-            return exitCode == 0 && !timedOut;
+            return exitCode == 0 && !timedOut && outputClean;
+        }
+        
+        /**
+         * Returns true if exit code is 0 but output contains exceptions.
+         * This indicates a partial success or undetected error.
+         */
+        public boolean hasOutputWarnings() {
+            return exitCode == 0 && !timedOut && !outputClean;
         }
         
         public String getStatusString() {
             if (timedOut) return "TIMEOUT";
-            return exitCode == 0 ? "SUCCESS" : "FAILED";
+            if (exitCode != 0) return "FAILED";
+            if (!outputClean) return "COMPLETED_WITH_ERRORS";
+            return "SUCCESS";
+        }
+        
+        /**
+         * Returns a summary of detected issues for logging/display.
+         */
+        public String getIssueSummary() {
+            if (isSuccess()) {
+                return "Completed successfully";
+            }
+            
+            StringBuilder sb = new StringBuilder();
+            if (timedOut) {
+                sb.append("Process timed out. ");
+            }
+            if (exitCode != 0) {
+                sb.append("Exit code: ").append(exitCode).append(". ");
+            }
+            if (!outputClean) {
+                sb.append("Exceptions detected in output: ");
+                sb.append(String.join(", ", detectedExceptions));
+            }
+            return sb.toString();
         }
         
         @Override
@@ -254,8 +389,10 @@ public class DumpScriptExecutor {
             return "ExecutionResult{" +
                     "exitCode=" + exitCode +
                     ", timedOut=" + timedOut +
+                    ", outputClean=" + outputClean +
                     ", durationMillis=" + durationMillis +
                     ", outputLength=" + (output != null ? output.length() : 0) +
+                    ", exceptionsFound=" + detectedExceptions.size() +
                     '}';
         }
     }

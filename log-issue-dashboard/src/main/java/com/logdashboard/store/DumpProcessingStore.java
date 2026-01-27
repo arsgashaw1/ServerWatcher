@@ -455,6 +455,9 @@ public class DumpProcessingStore {
                         case DumpFileTracking.STATUS_COMPLETED:
                             stats.completedCount = count;
                             break;
+                        case DumpFileTracking.STATUS_COMPLETED_WITH_ERRORS:
+                            stats.completedWithErrorsCount = count;
+                            break;
                         case DumpFileTracking.STATUS_FAILED:
                             stats.failedCount = count;
                             break;
@@ -524,10 +527,18 @@ public class DumpProcessingStore {
         public int pendingCount = 0;
         public int processingCount = 0;
         public int completedCount = 0;
+        public int completedWithErrorsCount = 0;  // Completed but with exceptions in output
         public int failedCount = 0;
         
         public int getTotalCount() {
-            return pendingCount + processingCount + completedCount + failedCount;
+            return pendingCount + processingCount + completedCount + completedWithErrorsCount + failedCount;
+        }
+        
+        /**
+         * Returns count of all "done" files (completed + completed with errors).
+         */
+        public int getTotalDoneCount() {
+            return completedCount + completedWithErrorsCount;
         }
     }
 }

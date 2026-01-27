@@ -339,35 +339,63 @@ public class DumpProcessingWatcher {
             // Update config with last run info
             store.updateLastRunStatus(config.getId(), result.getStatusString(), result.getOutput());
             
+            // Determine the appropriate status based on result
+            String newStatus;
+            boolean shouldCleanup = false;
+            
             if (result.isSuccess()) {
-                // Success - mark all files as completed
-                for (DumpFileTracking file : files) {
-                    try {
-                        store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_COMPLETED, result.getOutput());
-                    } catch (SQLException e) {
-                        System.err.println("Error updating file status: " + e.getMessage());
-                    }
-                }
+                // True success: exit code 0, no timeout, no exceptions in output
+                newStatus = DumpFileTracking.STATUS_COMPLETED;
+                shouldCleanup = true; // Clean up tracking record after true success
                 updateStatus("Completed: " + files.size() + " file(s) [" + config.getServerName() + 
                     "] (exit code: " + result.getExitCode() + ", duration: " + 
-                    result.getDurationMillis() / 1000 + "s)");
+                    result.getDurationMillis() / 1000 + "s, output clean)");
+            } else if (result.hasOutputWarnings()) {
+                // Exit code 0 but exceptions found in output - mark as completed with errors
+                newStatus = DumpFileTracking.STATUS_COMPLETED_WITH_ERRORS;
+                shouldCleanup = false; // Keep record for review
+                updateStatus("Completed with errors: " + files.size() + " file(s) [" + config.getServerName() + 
+                    "] - Exceptions detected in output: " + String.join(", ", result.getDetectedExceptions()));
             } else {
-                // Failed - mark all files as failed, handle retries
-                for (DumpFileTracking file : files) {
-                    try {
-                        store.updateFileStatus(file.getId(), DumpFileTracking.STATUS_FAILED, result.getOutput());
-                        
-                        // Check if we should retry - check retry count directly since we're in the failure block
-                        // (the in-memory status is stale, but we know this is a failure)
-                        if (file.getRetryCount() < MAX_RETRIES) {
-                            store.incrementRetryCount(file.getId());
-                        }
-                    } catch (SQLException e) {
-                        System.err.println("Error updating file status: " + e.getMessage());
-                    }
-                }
+                // Failed - exit code != 0 or timed out
+                newStatus = DumpFileTracking.STATUS_FAILED;
+                shouldCleanup = false;
                 updateStatus("Failed: " + files.size() + " file(s) [" + config.getServerName() + 
                     "] - " + (result.isTimedOut() ? "TIMEOUT" : "exit code: " + result.getExitCode()));
+            }
+            
+            // Update status for all files
+            for (DumpFileTracking file : files) {
+                try {
+                    if (shouldCleanup) {
+                        // True success: delete the physical dump file from the folder
+                        File dumpFile = new File(file.getFilePath());
+                        if (dumpFile.exists()) {
+                            if (dumpFile.delete()) {
+                                updateStatus("Deleted dump file: " + file.getFileName());
+                            } else {
+                                System.err.println("Warning: Failed to delete dump file: " + file.getFilePath());
+                                updateStatus("Warning: Could not delete dump file: " + file.getFileName());
+                            }
+                        } else {
+                            updateStatus("Dump file already removed: " + file.getFileName());
+                        }
+                        
+                        // Delete the tracking record (data is "gone")
+                        store.deleteFileTracking(file.getId());
+                        updateStatus("Cleaned up tracking record for: " + file.getFileName());
+                    } else {
+                        // Not a clean success: keep the record with status and output
+                        store.updateFileStatus(file.getId(), newStatus, result.getOutput());
+                        
+                        // Handle retries for failed files (not for completed_with_errors)
+                        if (newStatus.equals(DumpFileTracking.STATUS_FAILED) && file.getRetryCount() < MAX_RETRIES) {
+                            store.incrementRetryCount(file.getId());
+                        }
+                    }
+                } catch (SQLException e) {
+                    System.err.println("Error updating file status: " + e.getMessage());
+                }
             }
             
         } catch (SQLException e) {

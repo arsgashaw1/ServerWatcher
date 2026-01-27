@@ -28,6 +28,10 @@
     border-left: 3px solid var(--success-color);
 }
 
+.status-card.warning {
+    border-left: 3px solid #f39c12;
+}
+
 .status-card.error {
     border-left: 3px solid var(--danger-color);
 }
@@ -151,7 +155,7 @@
 /* File Status Summary Cards */
 .file-status-summary {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 1rem;
     margin-bottom: 1rem;
 }
@@ -202,6 +206,15 @@
 .file-status-card.completed.active {
     border-color: #27ae60;
     background: rgba(39, 174, 96, 0.1);
+}
+
+.file-status-card.warning {
+    border-left: 3px solid #f39c12;
+}
+
+.file-status-card.warning.active {
+    border-color: #f39c12;
+    background: rgba(243, 156, 18, 0.1);
 }
 
 .file-status-card.failed {
@@ -287,6 +300,10 @@
     color: var(--success-color);
 }
 
+.process-time.warning {
+    color: #f39c12;
+}
+
 .process-time.failed {
     color: var(--danger-color);
 }
@@ -316,6 +333,11 @@
 .status-badge.completed {
     background: rgba(39, 174, 96, 0.15);
     color: #27ae60;
+}
+
+.status-badge.completed-with-errors {
+    background: rgba(243, 156, 18, 0.15);
+    color: #f39c12;
 }
 
 .status-badge.failed {
@@ -390,6 +412,51 @@
     word-break: break-word;
 }
 
+/* Output with exceptions indicator */
+.output-content.has-exceptions {
+    border: 2px solid #f39c12;
+}
+
+/* Exception highlighting in output */
+.output-content .exception-line {
+    background: rgba(231, 76, 60, 0.3);
+    color: #ff6b6b;
+    display: block;
+    padding: 2px 4px;
+    margin: 2px -4px;
+    border-radius: 2px;
+}
+
+.output-content .exception-name {
+    color: #ff6b6b;
+    font-weight: bold;
+}
+
+.output-content .stacktrace-line {
+    color: #aaa;
+    opacity: 0.9;
+}
+
+.output-content .error-line {
+    background: rgba(231, 76, 60, 0.2);
+    color: #ff8888;
+    display: block;
+    padding: 2px 4px;
+    margin: 2px -4px;
+    border-radius: 2px;
+}
+
+/* Warning button for output with exceptions */
+.btn-warning {
+    background: #f39c12;
+    color: white;
+    border: none;
+}
+
+.btn-warning:hover {
+    background: #e67e22;
+}
+
 /* Modal large size */
 .modal-lg {
     max-width: 700px;
@@ -453,6 +520,15 @@
     background: rgba(231, 76, 60, 0.1);
 }
 
+/* Warning row highlight (completed with errors) */
+.row-warning {
+    background: rgba(243, 156, 18, 0.05);
+}
+
+.row-warning:hover {
+    background: rgba(243, 156, 18, 0.1);
+}
+
 /* Responsive file status summary */
 @media (max-width: 600px) {
     .file-status-summary {
@@ -485,4 +561,12 @@
 
 [data-theme="dark"] .row-failed:hover {
     background: rgba(231, 76, 60, 0.15);
+}
+
+[data-theme="dark"] .row-warning {
+    background: rgba(243, 156, 18, 0.1);
+}
+
+[data-theme="dark"] .row-warning:hover {
+    background: rgba(243, 156, 18, 0.15);
 }

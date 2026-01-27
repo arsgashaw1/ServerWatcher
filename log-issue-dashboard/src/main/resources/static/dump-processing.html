@@ -81,6 +81,13 @@
                             <span class="status-value" id="completedCount">--</span>
                         </div>
                     </div>
+                    <div class="status-card warning">
+                        <div class="status-icon">⚠️</div>
+                        <div class="status-info">
+                            <span class="status-label">With Errors</span>
+                            <span class="status-value" id="completedWithErrorsCount">--</span>
+                        </div>
+                    </div>
                     <div class="status-card error">
                         <div class="status-icon">❌</div>
                         <div class="status-info">
@@ -170,6 +177,13 @@
                                 <span class="file-status-label">Completed</span>
                             </div>
                         </div>
+                        <div class="file-status-card warning" data-filter="COMPLETED_WITH_ERRORS">
+                            <div class="file-status-icon">⚠️</div>
+                            <div class="file-status-info">
+                                <span class="file-status-count" id="fileCompletedWithErrorsCount">0</span>
+                                <span class="file-status-label">With Errors</span>
+                            </div>
+                        </div>
                         <div class="file-status-card failed" data-filter="FAILED">
                             <div class="file-status-icon">❌</div>
                             <div class="file-status-info">
@@ -185,6 +199,7 @@
                         <button class="filter-tab" data-filter="PENDING">Queued</button>
                         <button class="filter-tab" data-filter="PROCESSING">Processing</button>
                         <button class="filter-tab" data-filter="COMPLETED">Completed</button>
+                        <button class="filter-tab" data-filter="COMPLETED_WITH_ERRORS">With Errors</button>
                         <button class="filter-tab" data-filter="FAILED">Failed</button>
                     </div>
                     
