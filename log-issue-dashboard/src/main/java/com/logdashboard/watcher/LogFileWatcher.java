@@ -415,10 +415,21 @@ public class LogFileWatcher {
         Path watchPath = Paths.get(pathStr);
         
         try {
+            // Check if path exists
+            if (!Files.exists(watchPath)) {
+                // Only log this warning periodically (not every poll cycle)
+                // to avoid flooding the logs
+                String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+                System.err.println("Warning: Path does not exist: " + pathStr + serverInfo);
+                return;
+            }
+            
             if (Files.isDirectory(watchPath)) {
+                int matchingFiles = 0;
                 try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
                     for (Path file : stream) {
                         if (Files.isRegularFile(file) && matchesFilePattern(file)) {
+                            matchingFiles++;
                             currentFiles.add(file);
                             if (serverName != null && !fileServerNames.containsKey(file)) {
                                 fileServerNames.put(file, serverName);
@@ -436,27 +447,44 @@ public class LogFileWatcher {
                         }
                     }
                 }
-            } else if (Files.isRegularFile(watchPath) && matchesFilePattern(watchPath)) {
-                currentFiles.add(watchPath);
-                if (serverName != null && !fileServerNames.containsKey(watchPath)) {
-                    fileServerNames.put(watchPath, serverName);
+                // Log if directory exists but no matching files found (for debugging)
+                if (matchingFiles == 0 && !pathStr.equals(lastEmptyPathWarned)) {
+                    String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+                    updateStatus("No matching files in: " + pathStr + serverInfo + " (patterns: " + filePatterns + ")");
+                    lastEmptyPathWarned = pathStr;
                 }
-                if (!fileCharsets.containsKey(watchPath)) {
-                    fileCharsets.put(watchPath, charset);
+            } else if (Files.isRegularFile(watchPath)) {
+                if (matchesFilePattern(watchPath)) {
+                    currentFiles.add(watchPath);
+                    if (serverName != null && !fileServerNames.containsKey(watchPath)) {
+                        fileServerNames.put(watchPath, serverName);
+                    }
+                    if (!fileCharsets.containsKey(watchPath)) {
+                        fileCharsets.put(watchPath, charset);
+                    }
+                    if (iconvEncoding != null && !fileIconvEncodings.containsKey(watchPath)) {
+                        fileIconvEncodings.put(watchPath, iconvEncoding);
+                    }
+                    if (!fileUseIconv.containsKey(watchPath)) {
+                        fileUseIconv.put(watchPath, useIconv);
+                    }
+                    checkFileForChanges(watchPath);
+                } else {
+                    String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+                    System.err.println("Warning: File does not match patterns: " + watchPath.getFileName() + serverInfo);
                 }
-                if (iconvEncoding != null && !fileIconvEncodings.containsKey(watchPath)) {
-                    fileIconvEncodings.put(watchPath, iconvEncoding);
-                }
-                if (!fileUseIconv.containsKey(watchPath)) {
-                    fileUseIconv.put(watchPath, useIconv);
-                }
-                checkFileForChanges(watchPath);
             }
         } catch (IOException e) {
-            // Log error but continue
-            System.err.println("Error polling: " + pathStr + " - " + e.getMessage());
+            // Log error to both stderr and status callback
+            String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+            String errorMsg = "Error polling: " + pathStr + serverInfo + " - " + e.getMessage();
+            System.err.println(errorMsg);
+            updateStatus(errorMsg);
         }
     }
+    
+    // Track last empty path warned to avoid repetitive warnings
+    private volatile String lastEmptyPathWarned = null;
     
     /**
      * Checks a specific file for new content.
@@ -762,5 +790,86 @@ public class LogFileWatcher {
         scanPath(path, serverName, server.getCharset(), server.getIconvEncoding(), useIconv);
         
         updateStatus("Now watching " + getTotalWatchPaths() + " path(s)");
+    }
+    
+    /**
+     * Returns true if the watcher is currently running.
+     */
+    public boolean isRunning() {
+        return running;
+    }
+    
+    /**
+     * Returns diagnostic information about the watcher status.
+     * Useful for troubleshooting.
+     */
+    public Map<String, Object> getDiagnostics() {
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("running", running);
+        diagnostics.put("trackedFilesCount", filePositions.size());
+        diagnostics.put("maxTrackedFiles", MAX_TRACKED_FILES);
+        diagnostics.put("pollingIntervalSeconds", config.getPollingIntervalSeconds());
+        
+        // File patterns
+        List<String> patterns = new ArrayList<>();
+        for (Pattern p : filePatterns) {
+            patterns.add(p.pattern());
+        }
+        diagnostics.put("filePatterns", patterns);
+        
+        // Configured paths
+        List<Map<String, Object>> configuredPaths = new ArrayList<>();
+        if (config.getWatchPaths() != null) {
+            for (String path : config.getWatchPaths()) {
+                Map<String, Object> pathInfo = new LinkedHashMap<>();
+                pathInfo.put("path", path);
+                pathInfo.put("type", "legacy");
+                pathInfo.put("exists", Files.exists(Paths.get(path)));
+                configuredPaths.add(pathInfo);
+            }
+        }
+        if (config.getServers() != null) {
+            for (ServerPath server : config.getServers()) {
+                Map<String, Object> pathInfo = new LinkedHashMap<>();
+                pathInfo.put("path", server.getPath());
+                pathInfo.put("serverName", server.getServerName());
+                pathInfo.put("type", "server");
+                pathInfo.put("exists", Files.exists(Paths.get(server.getPath())));
+                pathInfo.put("encoding", server.getEncoding());
+                configuredPaths.add(pathInfo);
+            }
+        }
+        for (ServerPath server : dynamicServerPaths) {
+            Map<String, Object> pathInfo = new LinkedHashMap<>();
+            pathInfo.put("path", server.getPath());
+            pathInfo.put("serverName", server.getServerName());
+            pathInfo.put("type", "dynamic");
+            pathInfo.put("exists", Files.exists(Paths.get(server.getPath())));
+            pathInfo.put("encoding", server.getEncoding());
+            configuredPaths.add(pathInfo);
+        }
+        diagnostics.put("configuredPaths", configuredPaths);
+        
+        // Tracked files
+        List<Map<String, Object>> trackedFilesList = new ArrayList<>();
+        for (Path file : filePositions.keySet()) {
+            Map<String, Object> fileInfo = new LinkedHashMap<>();
+            fileInfo.put("path", file.toString());
+            fileInfo.put("fileName", file.getFileName().toString());
+            fileInfo.put("serverName", fileServerNames.get(file));
+            fileInfo.put("position", filePositions.get(file));
+            fileInfo.put("lineNumber", fileLineNumbers.get(file));
+            fileInfo.put("charset", fileCharsets.get(file) != null ? fileCharsets.get(file).displayName() : "UTF-8");
+            try {
+                fileInfo.put("currentSize", Files.size(file));
+                fileInfo.put("exists", true);
+            } catch (IOException e) {
+                fileInfo.put("exists", false);
+            }
+            trackedFilesList.add(fileInfo);
+        }
+        diagnostics.put("trackedFiles", trackedFilesList);
+        
+        return diagnostics;
     }
 }

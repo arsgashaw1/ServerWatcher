@@ -112,6 +112,9 @@ public class ConfigApiServlet extends HttpServlet {
                 case "/settings":
                     handleGetSettings(out);
                     break;
+                case "/diagnostics":
+                    handleGetDiagnostics(out);
+                    break;
                 default:
                     resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
                     out.write(GSON.toJson(error("Not found: " + pathInfo)));
@@ -568,6 +571,29 @@ public class ConfigApiServlet extends HttpServlet {
         result.put("storageType", config.getStorageType());
         result.put("databasePath", config.getDatabasePath());
         result.put("requiresAuth", config.hasAdminCredentials());
+        out.write(GSON.toJson(result));
+    }
+    
+    /**
+     * Get diagnostic information about the log file watcher.
+     * Useful for troubleshooting why the watcher might not be working.
+     */
+    private void handleGetDiagnostics(PrintWriter out) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        
+        if (logWatcher != null) {
+            result.put("watcherAvailable", true);
+            result.putAll(logWatcher.getDiagnostics());
+        } else {
+            result.put("watcherAvailable", false);
+            result.put("error", "Log file watcher is not initialized");
+        }
+        
+        // Add config info
+        result.put("configPath", configLoader.getConfigFilePath().toString());
+        result.put("configuredServerCount", config.getServers() != null ? config.getServers().size() : 0);
+        result.put("configuredWatchPathCount", config.getWatchPaths() != null ? config.getWatchPaths().size() : 0);
+        
         out.write(GSON.toJson(result));
     }
     
