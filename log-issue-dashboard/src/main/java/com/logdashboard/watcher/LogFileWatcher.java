@@ -501,9 +501,32 @@ public class LogFileWatcher {
             
             if (currentSize > lastPosition) {
                 // File has grown - read new content
+                long bytesToRead = currentSize - lastPosition;
+                String serverInfo = serverName != null ? " [" + serverName + "]" : "";
+                
+                // Debug: Log when new content is detected
+                if (verboseLogging) {
+                    updateStatus("New content detected in " + file.getFileName() + serverInfo + 
+                        " (" + bytesToRead + " bytes, pos " + lastPosition + " -> " + currentSize + ")");
+                }
+                
                 ReadResult result = readNewLinesWithPosition(file, lastPosition, charset, iconvEncoding, useIconv);
                 
                 if (!result.lines.isEmpty()) {
+                    // Debug: Log number of lines read
+                    if (verboseLogging) {
+                        updateStatus("Read " + result.lines.size() + " lines from " + file.getFileName() + serverInfo);
+                        // Show first few lines for debugging
+                        int previewLines = Math.min(3, result.lines.size());
+                        for (int i = 0; i < previewLines; i++) {
+                            String line = result.lines.get(i);
+                            if (line.length() > 100) {
+                                line = line.substring(0, 100) + "...";
+                            }
+                            updateStatus("  Line " + (lastLineNumber + 1 + i) + ": " + line);
+                        }
+                    }
+                    
                     List<LogIssue> issues = parser.parseLines(
                         serverName,
                         file.getFileName().toString(),
@@ -511,11 +534,20 @@ public class LogFileWatcher {
                         lastLineNumber + 1
                     );
                     
+                    // Debug: Log issues found
+                    if (verboseLogging && issues.isEmpty()) {
+                        updateStatus("No issues detected in " + result.lines.size() + " lines from " + file.getFileName() + serverInfo);
+                    } else if (!issues.isEmpty()) {
+                        updateStatus("Detected " + issues.size() + " issue(s) in " + file.getFileName() + serverInfo);
+                    }
+                    
                     for (LogIssue issue : issues) {
                         issueCallback.accept(issue);
                     }
                     
                     fileLineNumbers.put(file, lastLineNumber + result.lines.size());
+                } else if (verboseLogging && result.bytesRead > 0) {
+                    updateStatus("Read " + result.bytesRead + " bytes but no complete lines from " + file.getFileName() + serverInfo);
                 }
                 
                 // Update position to actual bytes read, not currentSize
@@ -536,6 +568,24 @@ public class LogFileWatcher {
         } catch (IOException e) {
             System.err.println("Error checking file: " + file + " - " + e.getMessage());
         }
+    }
+    
+    // Verbose logging flag - can be enabled for debugging
+    private volatile boolean verboseLogging = false;
+    
+    /**
+     * Enables or disables verbose logging for debugging.
+     */
+    public void setVerboseLogging(boolean enabled) {
+        this.verboseLogging = enabled;
+        updateStatus("Verbose logging " + (enabled ? "enabled" : "disabled"));
+    }
+    
+    /**
+     * Returns whether verbose logging is enabled.
+     */
+    public boolean isVerboseLogging() {
+        return verboseLogging;
     }
     
     /**
