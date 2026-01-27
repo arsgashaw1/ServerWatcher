@@ -201,6 +201,11 @@ async function loadStatus() {
         pendingCount.textContent = data.totalPending;
         processingCount.textContent = data.currentlyProcessing;
         completedCount.textContent = data.totalCompleted;
+        // Handle completedWithErrors count (new status)
+        const completedWithErrorsEl = document.getElementById('completedWithErrorsCount');
+        if (completedWithErrorsEl) {
+            completedWithErrorsEl.textContent = data.totalCompletedWithErrors || 0;
+        }
         failedCount.textContent = data.totalFailed;
     } catch (error) {
         console.error('Error loading status:', error);
@@ -229,6 +234,7 @@ function updateFileStatusCounts() {
         PENDING: 0,
         PROCESSING: 0,
         COMPLETED: 0,
+        COMPLETED_WITH_ERRORS: 0,
         FAILED: 0
     };
     
@@ -241,6 +247,10 @@ function updateFileStatusCounts() {
     document.getElementById('filePendingCount').textContent = counts.PENDING;
     document.getElementById('fileProcessingCount').textContent = counts.PROCESSING;
     document.getElementById('fileCompletedCount').textContent = counts.COMPLETED;
+    const completedWithErrorsEl = document.getElementById('fileCompletedWithErrorsCount');
+    if (completedWithErrorsEl) {
+        completedWithErrorsEl.textContent = counts.COMPLETED_WITH_ERRORS;
+    }
     document.getElementById('fileFailedCount').textContent = counts.FAILED;
 }
 
@@ -515,7 +525,7 @@ function renderFiles(files) {
     if (!files || files.length === 0) {
         const emptyMessage = currentFilter === 'ALL' 
             ? 'No files tracked for this configuration'
-            : `No ${currentFilter.toLowerCase()} files`;
+            : `No ${currentFilter.toLowerCase().replace('_', ' ')} files`;
         filesTableBody.innerHTML = `
             <tr>
                 <td colspan="8" style="text-align: center; padding: 2rem;">
@@ -543,7 +553,10 @@ function renderFiles(files) {
             const endTime = new Date(file.processEndTime).getTime();
             const durationMs = endTime - startTime;
             const durationSec = Math.round(durationMs / 1000);
-            const statusClass = file.status === 'COMPLETED' ? 'success' : (file.status === 'FAILED' ? 'failed' : '');
+            let statusClass = '';
+            if (file.status === 'COMPLETED') statusClass = 'success';
+            else if (file.status === 'COMPLETED_WITH_ERRORS') statusClass = 'warning';
+            else if (file.status === 'FAILED') statusClass = 'failed';
             processTimeHtml = `<span class="process-time ${statusClass}">${formatDuration(durationSec)}</span>`;
         } else if (file.processStartTime && file.status === 'PROCESSING') {
             processTimeHtml = '<span class="process-time">In progress...</span>';
@@ -554,9 +567,13 @@ function renderFiles(files) {
             'PENDING': '⏳',
             'PROCESSING': '🔄',
             'COMPLETED': '✅',
+            'COMPLETED_WITH_ERRORS': '⚠️',
             'FAILED': '❌'
         };
         const statusIcon = statusIcons[file.status] || '';
+        
+        // Status display text (make COMPLETED_WITH_ERRORS more readable)
+        const statusText = file.status === 'COMPLETED_WITH_ERRORS' ? 'With Errors' : file.status;
         
         // Retry info with warning if retries > 0
         let retryHtml = file.retryCount.toString();
@@ -566,28 +583,73 @@ function renderFiles(files) {
             retryHtml = `<span style="color: var(--warning-color, #f39c12)">${file.retryCount}</span>`;
         }
         
+        // Check if output contains exceptions (for highlighting the View button)
+        const hasExceptions = file.processOutput && containsExceptions(file.processOutput);
+        const outputBtnClass = hasExceptions ? 'btn-warning' : 'btn-secondary';
+        const outputBtnTitle = hasExceptions ? 'View Output (contains exceptions!)' : 'View Output';
+        
+        // Row class based on status
+        let rowClass = '';
+        if (file.status === 'FAILED') rowClass = 'row-failed';
+        else if (file.status === 'COMPLETED_WITH_ERRORS') rowClass = 'row-warning';
+        
         return `
-        <tr class="${file.status === 'FAILED' ? 'row-failed' : ''}">
+        <tr class="${rowClass}">
             <td class="cell-truncate" title="${escapeHtml(file.fileName)}">${escapeHtml(file.fileName)}</td>
             <td>${formatFileSize(file.fileSize)}</td>
             <td><span title="${formatTimestamp(file.firstSeenTime)}">${formatTimeAgo(file.firstSeenTime)}</span></td>
             <td>${file.ageMinutes} min</td>
             <td>
-                <span class="status-badge ${file.status.toLowerCase()}">
-                    ${statusIcon} ${file.status}
+                <span class="status-badge ${file.status.toLowerCase().replace('_', '-')}">
+                    ${statusIcon} ${statusText}
                 </span>
             </td>
             <td>${retryHtml}</td>
             <td>${processTimeHtml}</td>
             <td>
                 ${file.processOutput ? `
-                    <button class="btn btn-sm btn-secondary" data-file-id="${file.id}" onclick="showOutputById(this.dataset.fileId)">
-                        View
+                    <button class="btn btn-sm ${outputBtnClass}" data-file-id="${file.id}" 
+                            onclick="showOutputById(this.dataset.fileId)" title="${outputBtnTitle}">
+                        ${hasExceptions ? '⚠️ View' : 'View'}
                     </button>
                 ` : '--'}
             </td>
         </tr>
     `}).join('');
+}
+
+/**
+ * Checks if the output contains exception patterns.
+ * This mirrors the backend detection for UI highlighting.
+ */
+function containsExceptions(output) {
+    if (!output) return false;
+    
+    const exceptionPatterns = [
+        /Exception\s*:/i,
+        /^\s*at\s+[\w.$]+\([^)]+\)\s*$/m, // Stack trace line
+        /java\.lang\.\w*Exception/i,
+        /java\.io\.\w*Exception/i,
+        /java\.sql\.\w*Exception/i,
+        /SQL\s*Error/i,
+        /SQLSTATE/i,
+        /^ERROR[:\s]/im,
+        /\bFATAL\b/i,
+        /\bOOM\b|OutOfMemory/i,
+        /NullPointerException/i,
+        /ArrayIndexOutOfBoundsException/i,
+        /ClassNotFoundException/i,
+        /NoSuchMethodException/i,
+        /FileNotFoundException/i,
+        /IOException/i,
+        /SQLException/i,
+        /extraction\s+failed/i,
+        /database\s+error/i,
+        /connection\s+failed/i,
+        /unable\s+to\s+(open|read|write|connect)/i
+    ];
+    
+    return exceptionPatterns.some(pattern => pattern.test(output));
 }
 
 // Modal Functions
@@ -635,13 +697,61 @@ function closeOutputModal() {
 }
 
 function showOutput(output) {
-    outputContent.textContent = output || 'No output available';
+    if (!output) {
+        outputContent.textContent = 'No output available';
+        outputContent.className = 'output-content';
+    } else {
+        // Highlight exceptions in the output
+        const highlightedOutput = highlightExceptions(output);
+        outputContent.innerHTML = highlightedOutput;
+        
+        // Add warning class if exceptions found
+        if (containsExceptions(output)) {
+            outputContent.className = 'output-content has-exceptions';
+        } else {
+            outputContent.className = 'output-content';
+        }
+    }
     outputModal.style.display = 'flex';
 }
 
 function showOutputById(fileId) {
     const output = window._fileOutputs ? window._fileOutputs[fileId] : null;
     showOutput(output);
+}
+
+/**
+ * Highlights exception patterns in the output for better visibility.
+ */
+function highlightExceptions(output) {
+    if (!output) return '';
+    
+    // Escape HTML first
+    let escaped = escapeHtml(output);
+    
+    // Define patterns to highlight
+    const highlightPatterns = [
+        { pattern: /(Exception\s*:[^\n]*)/gi, class: 'exception-line' },
+        { pattern: /(^\s*at\s+[\w.$]+\([^)]+\)\s*$)/gm, class: 'stacktrace-line' },
+        { pattern: /(java\.lang\.\w*Exception)/gi, class: 'exception-name' },
+        { pattern: /(java\.io\.\w*Exception)/gi, class: 'exception-name' },
+        { pattern: /(java\.sql\.\w*Exception)/gi, class: 'exception-name' },
+        { pattern: /(SQL\s*Error[^\n]*)/gi, class: 'error-line' },
+        { pattern: /(SQLSTATE[^\n]*)/gi, class: 'error-line' },
+        { pattern: /(^ERROR[:\s][^\n]*)/gim, class: 'error-line' },
+        { pattern: /(\bFATAL\b[^\n]*)/gi, class: 'error-line' },
+        { pattern: /(NullPointerException)/gi, class: 'exception-name' },
+        { pattern: /(OutOfMemory\w*)/gi, class: 'exception-name' },
+        { pattern: /(IOException)/gi, class: 'exception-name' },
+        { pattern: /(SQLException)/gi, class: 'exception-name' }
+    ];
+    
+    // Apply highlighting
+    for (const { pattern, class: className } of highlightPatterns) {
+        escaped = escaped.replace(pattern, `<span class="${className}">$1</span>`);
+    }
+    
+    return escaped;
 }
 
 function updateCommandPreview() {

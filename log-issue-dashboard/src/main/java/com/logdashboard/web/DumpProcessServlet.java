@@ -394,12 +394,14 @@ public class DumpProcessServlet extends HttpServlet {
         
         int totalPending = 0;
         int totalCompleted = 0;
+        int totalCompletedWithErrors = 0;
         int totalFailed = 0;
         
         for (DumpProcessConfig config : configs) {
             DumpProcessingStore.ProcessingStats stats = dumpStore.getStatsForConfig(config.getId());
             totalPending += stats.pendingCount;
             totalCompleted += stats.completedCount;
+            totalCompletedWithErrors += stats.completedWithErrorsCount;
             totalFailed += stats.failedCount;
         }
         
@@ -410,6 +412,7 @@ public class DumpProcessServlet extends HttpServlet {
         status.put("currentlyProcessing", processingFiles.size());
         status.put("totalPending", totalPending);
         status.put("totalCompleted", totalCompleted);
+        status.put("totalCompletedWithErrors", totalCompletedWithErrors);
         status.put("totalFailed", totalFailed);
         
         // Add currently processing files
@@ -587,6 +590,7 @@ public class DumpProcessServlet extends HttpServlet {
         map.put("pending", stats.pendingCount);
         map.put("processing", stats.processingCount);
         map.put("completed", stats.completedCount);
+        map.put("completedWithErrors", stats.completedWithErrorsCount);
         map.put("failed", stats.failedCount);
         map.put("total", stats.getTotalCount());
         return map;

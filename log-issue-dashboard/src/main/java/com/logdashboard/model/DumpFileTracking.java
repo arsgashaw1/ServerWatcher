@@ -10,6 +10,7 @@ public class DumpFileTracking {
     public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_PROCESSING = "PROCESSING";
     public static final String STATUS_COMPLETED = "COMPLETED";
+    public static final String STATUS_COMPLETED_WITH_ERRORS = "COMPLETED_WITH_ERRORS"; // Exit 0 but exceptions in output
     public static final String STATUS_FAILED = "FAILED";
     
     private int id;
