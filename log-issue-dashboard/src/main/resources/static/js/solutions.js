@@ -330,9 +330,13 @@ class SolutionsManager {
             description: document.getElementById('solutionDescription').value
         };
         
+        console.log('Saving solution:', { id, data });
+        
         try {
             const url = id ? `/solutions/${id}` : '/solutions';
             const method = id ? 'PUT' : 'POST';
+            
+            console.log('Request:', method, url);
             
             const response = await fetch(url, {
                 method,
@@ -340,18 +344,22 @@ class SolutionsManager {
                 body: JSON.stringify(data)
             });
             
+            console.log('Response status:', response.status);
+            
+            const responseData = await response.json();
+            console.log('Response data:', responseData);
+            
             if (response.ok) {
                 this.closeModal();
                 this.loadSolutions();
                 this.loadStats();
                 this.showSuccess(id ? 'Solution updated' : 'Solution created');
             } else {
-                const error = await response.json();
-                this.showError(error.error || 'Failed to save solution');
+                this.showError(responseData.error || `Failed to save solution (${response.status})`);
             }
         } catch (error) {
             console.error('Error saving solution:', error);
-            this.showError('Failed to save solution');
+            this.showError('Failed to save solution: ' + error.message);
         }
     }
     

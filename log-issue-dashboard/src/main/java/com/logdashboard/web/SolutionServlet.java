@@ -400,9 +400,12 @@ public class SolutionServlet extends HttpServlet {
     
     private void handleUpdateSolution(String id, HttpServletRequest req, PrintWriter out, 
                                       HttpServletResponse resp) throws IOException {
+        System.out.println("Updating solution with ID: " + id);
+        
         Optional<IssueSolution> existing = solutionStore.getSolutionById(id);
         
         if (existing.isEmpty()) {
+            System.out.println("Solution not found: " + id);
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             out.write(GSON.toJson(error("Solution not found: " + id)));
             return;
@@ -411,10 +414,13 @@ public class SolutionServlet extends HttpServlet {
         JsonObject json = parseRequestBody(req);
         
         if (json == null) {
+            System.out.println("Invalid JSON body for solution update");
             resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             out.write(GSON.toJson(error("Invalid JSON body")));
             return;
         }
+        
+        System.out.println("Update data: " + json.toString());
         
         IssueSolution solution = existing.get();
         
@@ -423,10 +429,12 @@ public class SolutionServlet extends HttpServlet {
             solution.setIssuePattern(json.get("issuePattern").getAsString());
         }
         if (json.has("messagePattern")) {
-            solution.setMessagePattern(json.get("messagePattern").getAsString());
+            String msgPattern = json.get("messagePattern").isJsonNull() ? null : json.get("messagePattern").getAsString();
+            solution.setMessagePattern(msgPattern);
         }
         if (json.has("stackPattern")) {
-            solution.setStackPattern(json.get("stackPattern").getAsString());
+            String stackPattern = json.get("stackPattern").isJsonNull() ? null : json.get("stackPattern").getAsString();
+            solution.setStackPattern(stackPattern);
         }
         if (json.has("title")) {
             solution.setSolutionTitle(json.get("title").getAsString());
@@ -442,13 +450,22 @@ public class SolutionServlet extends HttpServlet {
             }
         }
         
-        boolean updated = solutionStore.updateSolution(solution);
-        
-        if (updated) {
-            out.write(GSON.toJson(solutionToMap(solution)));
-        } else {
+        try {
+            boolean updated = solutionStore.updateSolution(solution);
+            
+            if (updated) {
+                System.out.println("Solution updated successfully: " + id);
+                out.write(GSON.toJson(solutionToMap(solution)));
+            } else {
+                System.out.println("Failed to update solution in database: " + id);
+                resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                out.write(GSON.toJson(error("Failed to update solution in database")));
+            }
+        } catch (Exception e) {
+            System.err.println("Error updating solution: " + e.getMessage());
+            e.printStackTrace();
             resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            out.write(GSON.toJson(error("Failed to update solution")));
+            out.write(GSON.toJson(error("Error updating solution: " + e.getMessage())));
         }
     }
     
