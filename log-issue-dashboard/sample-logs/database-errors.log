@@ -1,0 +1,49 @@
+2025-12-16 07:00:00.000 INFO  [main] Database service starting
+2025-12-16 07:00:01.234 INFO  [main] Connecting to primary database: jdbc:postgresql://db-primary:5432/appdb
+
+2025-12-16 07:30:15.678 ERROR [db-pool-1] Connection failed to replica server
+org.postgresql.util.PSQLException: Connection refused to host: db-replica-1, port: 5432
+	at org.postgresql.core.v3.ConnectionFactoryImpl.openConnectionImpl(ConnectionFactoryImpl.java:280)
+	at org.postgresql.core.ConnectionFactory.openConnection(ConnectionFactory.java:49)
+	at org.postgresql.jdbc.PgConnection.<init>(PgConnection.java:223)
+	at org.postgresql.Driver.makeConnection(Driver.java:465)
+Caused by: java.net.ConnectException: Connection refused
+	at java.net.PlainSocketImpl.socketConnect(Native Method)
+	at java.net.AbstractPlainSocketImpl.doConnect(AbstractPlainSocketImpl.java:350)
+	... 4 more
+
+2025-12-16 08:00:45.123 WARN  [db-monitor] Replication lag detected: 45 seconds behind primary
+2025-12-16 08:05:12.456 WARN  [db-monitor] Replication lag increasing: 120 seconds behind primary
+2025-12-16 08:10:00.789 ERROR [db-monitor] FAILURE: Replication lag exceeded threshold (300s), switching to primary-only mode
+
+2025-12-16 08:45:30.012 ERROR [query-executor-3] Query execution failed
+java.sql.SQLSyntaxErrorException: ORA-00942: table or view does not exist
+	at oracle.jdbc.driver.T4CTTIoer11.processError(T4CTTIoer11.java:494)
+	at oracle.jdbc.driver.T4CTTIoer11.processError(T4CTTIoer11.java:446)
+	at oracle.jdbc.driver.T4C8Oall.processError(T4C8Oall.java:1052)
+
+2025-12-16 09:15:00.345 INFO  [db-backup] Starting daily database backup
+2025-12-16 09:15:45.678 WARN  [db-backup] Backup running slower than usual due to high I/O load
+2025-12-16 09:45:12.901 ERROR [db-backup] Backup FAILED: Insufficient disk space on backup volume
+java.io.IOException: No space left on device
+	at java.io.FileOutputStream.writeBytes(Native Method)
+	at java.io.FileOutputStream.write(FileOutputStream.java:326)
+	at com.backup.service.BackupWriter.write(BackupWriter.java:89)
+
+2025-12-16 10:30:00.123 FATAL [db-pool-main] Critical: Connection pool corrupted - possible connection leak detected
+java.lang.IllegalStateException: Connection pool state inconsistent: active=50, max=50, waiting=25
+	at com.zaxxer.hikari.pool.HikariPool.checkFailFast(HikariPool.java:234)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:178)
+	at com.myapp.repository.BaseRepository.getConnection(BaseRepository.java:45)
+
+2025-12-16 11:00:15.456 ERROR [query-executor-7] Deadlock detected in transaction
+org.hibernate.exception.LockAcquisitionException: could not execute statement
+	at org.hibernate.exception.internal.SQLExceptionTypeDelegate.convert(SQLExceptionTypeDelegate.java:63)
+	at org.hibernate.exception.internal.StandardSQLExceptionConverter.convert(StandardSQLExceptionConverter.java:37)
+	at org.hibernate.engine.jdbc.spi.SqlExceptionHelper.convert(SqlExceptionHelper.java:113)
+Caused by: com.mysql.cj.jdbc.exceptions.MySQLTransactionRollbackException: Deadlock found when trying to get lock; try restarting transaction
+	at com.mysql.cj.jdbc.exceptions.SQLError.createSQLException(SQLError.java:123)
+	... 15 more
+
+2025-12-16 11:30:45.789 WARN  [db-monitor] High memory usage on database server: 92%
+2025-12-16 11:35:00.012 WARNING [db-monitor] Query cache hit ratio dropped below 70%
