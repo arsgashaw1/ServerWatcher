@@ -3,9 +3,11 @@ package com.logdashboard.web;
 import com.logdashboard.analysis.AnalysisService;
 import com.logdashboard.config.ConfigLoader;
 import com.logdashboard.config.DashboardConfig;
+import com.logdashboard.service.SolutionMatchingService;
 import com.logdashboard.store.DumpProcessingStore;
 import com.logdashboard.store.InfrastructureStore;
 import com.logdashboard.store.IssueRepository;
+import com.logdashboard.store.SolutionStore;
 import com.logdashboard.watcher.DumpProcessingWatcher;
 import com.logdashboard.watcher.LogFileWatcher;
 
@@ -32,6 +34,8 @@ public class WebServer {
     private ConfigLoader configLoader;
     private LogFileWatcher logWatcher;
     private EventStreamServlet eventStreamServlet;
+    private SolutionStore solutionStore;
+    private SolutionMatchingService solutionMatchingService;
     
     public WebServer(int port, IssueRepository issueStore, AnalysisService analysisService, DashboardConfig config) {
         this.port = port;
@@ -68,6 +72,14 @@ public class WebServer {
      */
     public void setLogFileWatcher(LogFileWatcher logWatcher) {
         this.logWatcher = logWatcher;
+    }
+    
+    /**
+     * Sets the solution store and matching service for solution suggestions.
+     */
+    public void setSolutionComponents(SolutionStore solutionStore, SolutionMatchingService matchingService) {
+        this.solutionStore = solutionStore;
+        this.solutionMatchingService = matchingService;
     }
     
     /**
@@ -121,6 +133,14 @@ public class WebServer {
             ConfigApiServlet configServlet = new ConfigApiServlet(configLoader, config, logWatcher);
             Tomcat.addServlet(context, "config", configServlet);
             context.addServletMappingDecoded("/config/*", "config");
+        }
+        
+        // Add Solution API servlet for solution suggestions
+        if (solutionStore != null && solutionMatchingService != null) {
+            SolutionServlet solutionServlet = new SolutionServlet(
+                solutionStore, issueStore, solutionMatchingService);
+            Tomcat.addServlet(context, "solutions", solutionServlet);
+            context.addServletMappingDecoded("/solutions/*", "solutions");
         }
         
         // Add Static file servlet

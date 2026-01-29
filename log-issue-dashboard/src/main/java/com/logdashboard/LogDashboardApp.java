@@ -3,12 +3,15 @@ package com.logdashboard;
 import com.logdashboard.analysis.AnalysisService;
 import com.logdashboard.config.ConfigLoader;
 import com.logdashboard.config.DashboardConfig;
+import com.logdashboard.service.SolutionMatchingService;
 import com.logdashboard.store.DatabaseManager;
 import com.logdashboard.store.DumpProcessingStore;
 import com.logdashboard.store.H2IssueStore;
+import com.logdashboard.store.H2SolutionStore;
 import com.logdashboard.store.InfrastructureStore;
 import com.logdashboard.store.IssueRepository;
 import com.logdashboard.store.IssueStore;
+import com.logdashboard.store.SolutionStore;
 import com.logdashboard.watcher.ConfigFileWatcher;
 import com.logdashboard.watcher.DumpProcessingWatcher;
 import com.logdashboard.watcher.LogFileWatcher;
@@ -38,6 +41,8 @@ public class LogDashboardApp {
     private static InfrastructureStore infrastructureStore;
     private static DumpProcessingStore dumpProcessingStore;
     private static DumpProcessingWatcher dumpProcessingWatcher;
+    private static SolutionStore solutionStore;
+    private static SolutionMatchingService solutionMatchingService;
     private static AnalysisService analysisService;
     private static WebServer webServer;
     private static LogFileWatcher logWatcher;
@@ -151,6 +156,10 @@ public class LogDashboardApp {
                 dumpProcessingStore = new DumpProcessingStore(databaseManager);
                 dumpProcessingStore.initialize();
                 
+                // Initialize solution store for solution suggestions
+                solutionStore = new H2SolutionStore(databaseManager);
+                System.out.println("Solution suggestions enabled.");
+                
                 if (config.hasAdminCredentials()) {
                     System.out.println("Infrastructure management enabled with admin authentication.");
                 } else {
@@ -178,6 +187,11 @@ public class LogDashboardApp {
         // Create the analysis service
         analysisService = new AnalysisService(issueStore);
         
+        // Create the solution matching service (if solution store is available)
+        if (solutionStore != null) {
+            solutionMatchingService = new SolutionMatchingService(solutionStore);
+        }
+        
         // Create the log file watcher
         logWatcher = new LogFileWatcher(
             config,
@@ -204,6 +218,10 @@ public class LogDashboardApp {
         // Pass ConfigLoader and LogFileWatcher for configuration management
         webServer.setConfigLoader(configLoader);
         webServer.setLogFileWatcher(logWatcher);
+        // Pass solution components for solution suggestions
+        if (solutionStore != null && solutionMatchingService != null) {
+            webServer.setSolutionComponents(solutionStore, solutionMatchingService);
+        }
         webServer.start();
         
         // Create the config file watcher
@@ -290,6 +308,12 @@ public class LogDashboardApp {
         System.out.println("  GET  /api/servers          - List of servers");
         System.out.println("  POST /api/issues/{id}/acknowledge - Acknowledge an issue");
         System.out.println("  POST /api/issues/clear     - Clear all issues");
+        System.out.println();
+        System.out.println("Solutions API:");
+        System.out.println("  GET  /solutions            - List all solutions");
+        System.out.println("  GET  /solutions/issue/{id} - Get suggestions for an issue");
+        System.out.println("  POST /solutions            - Create a new solution");
+        System.out.println("  POST /solutions/{id}/upvote - Upvote a solution");
         System.out.println();
     }
 }

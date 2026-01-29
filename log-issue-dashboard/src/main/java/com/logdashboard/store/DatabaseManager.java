@@ -16,7 +16,7 @@ import java.sql.Statement;
 public class DatabaseManager {
     
     private static final String DEFAULT_DB_NAME = "log-dashboard";
-    private static final String SCHEMA_VERSION = "1";
+    private static final String SCHEMA_VERSION = "2";
     
     private final String jdbcUrl;
     private final String dbPath;
@@ -177,6 +177,59 @@ public class DatabaseManager {
             // Record current schema version
             stmt.execute(
                 "MERGE INTO schema_version (version) KEY (version) VALUES ('" + SCHEMA_VERSION + "')");
+            
+            // Create issue_solutions table for storing user-provided solutions
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS issue_solutions (" +
+                "    id VARCHAR(64) PRIMARY KEY," +
+                "    issue_pattern VARCHAR(512) NOT NULL," +
+                "    message_pattern VARCHAR(1024)," +
+                "    stack_pattern VARCHAR(1024)," +
+                "    solution_title VARCHAR(255) NOT NULL," +
+                "    solution_description TEXT NOT NULL," +
+                "    created_by VARCHAR(255)," +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    upvotes INT DEFAULT 0," +
+                "    downvotes INT DEFAULT 0," +
+                "    usage_count INT DEFAULT 0," +
+                "    status VARCHAR(32) DEFAULT 'ACTIVE'" +
+                ")");
+            
+            // Create indexes for solution queries
+            stmt.execute(
+                "CREATE INDEX IF NOT EXISTS idx_solutions_pattern " +
+                "ON issue_solutions(issue_pattern)");
+            
+            stmt.execute(
+                "CREATE INDEX IF NOT EXISTS idx_solutions_status " +
+                "ON issue_solutions(status)");
+            
+            stmt.execute(
+                "CREATE INDEX IF NOT EXISTS idx_solutions_upvotes " +
+                "ON issue_solutions(upvotes DESC)");
+            
+            // Create solution_matches table for tracking matches and feedback
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS solution_matches (" +
+                "    id VARCHAR(64) PRIMARY KEY," +
+                "    solution_id VARCHAR(64) NOT NULL," +
+                "    issue_id VARCHAR(64) NOT NULL," +
+                "    match_score INT DEFAULT 0," +
+                "    matched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                "    was_helpful BOOLEAN," +
+                "    feedback_at TIMESTAMP," +
+                "    FOREIGN KEY (solution_id) REFERENCES issue_solutions(id) ON DELETE CASCADE" +
+                ")");
+            
+            // Create indexes for match queries
+            stmt.execute(
+                "CREATE INDEX IF NOT EXISTS idx_matches_solution " +
+                "ON solution_matches(solution_id)");
+            
+            stmt.execute(
+                "CREATE INDEX IF NOT EXISTS idx_matches_issue " +
+                "ON solution_matches(issue_id)");
         }
     }
     

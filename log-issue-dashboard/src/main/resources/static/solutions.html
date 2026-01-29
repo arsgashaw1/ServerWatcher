@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel | Solutions Knowledge Base</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/solutions.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>
+                    <span class="logo">🛡️</span>
+                    Sentinel
+                </h1>
+                <span class="version">v2.0</span>
+            </div>
+            <nav class="header-nav">
+                <a href="/" class="nav-link">Dashboard</a>
+                <a href="/servers.html" class="nav-link">Servers</a>
+                <a href="/vms.html" class="nav-link">VMs</a>
+                <a href="/solutions.html" class="nav-link active">Solutions</a>
+                <a href="/dump-processing.html" class="nav-link">Dump Processing</a>
+                <a href="/config.html" class="nav-link">Config</a>
+            </nav>
+            <div class="header-right">
+                <button class="btn btn-icon" id="themeToggle" title="Toggle theme">
+                    🌙
+                </button>
+                <button class="btn btn-icon" id="refreshBtn" title="Refresh">
+                    🔄
+                </button>
+            </div>
+        </header>
+
+        <!-- Page Header -->
+        <section class="page-header">
+            <div class="page-header-content">
+                <div class="page-title">
+                    <h2>💡 Solutions Knowledge Base</h2>
+                    <p class="page-subtitle">Document and share solutions for common issues</p>
+                </div>
+                <div class="page-actions">
+                    <button class="btn btn-primary" id="addSolutionBtn">
+                        ➕ Add Solution
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Stats Cards -->
+        <section class="stats-section solutions-stats">
+            <div class="stats-grid stats-grid-4">
+                <div class="stat-card stat-total">
+                    <div class="stat-icon">📚</div>
+                    <div class="stat-content">
+                        <div class="stat-value" id="statTotal">0</div>
+                        <div class="stat-label">Total Solutions</div>
+                    </div>
+                </div>
+                <div class="stat-card stat-active">
+                    <div class="stat-icon">✅</div>
+                    <div class="stat-content">
+                        <div class="stat-value" id="statActive">0</div>
+                        <div class="stat-label">Active</div>
+                    </div>
+                </div>
+                <div class="stat-card stat-usage">
+                    <div class="stat-icon">📈</div>
+                    <div class="stat-content">
+                        <div class="stat-value" id="statUsage">0</div>
+                        <div class="stat-label">Total Uses</div>
+                    </div>
+                </div>
+                <div class="stat-card stat-helpful">
+                    <div class="stat-icon">👍</div>
+                    <div class="stat-content">
+                        <div class="stat-value" id="statHelpful">0</div>
+                        <div class="stat-label">Total Upvotes</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Content -->
+        <main class="main-content solutions-main">
+            <!-- Search and Filter Bar -->
+            <div class="solutions-toolbar">
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="Search solutions..." class="search-input">
+                    <button class="btn btn-secondary" id="searchBtn">🔍</button>
+                </div>
+                <div class="filter-options">
+                    <select id="sortSelect" class="filter-select">
+                        <option value="upvotes">Most Upvoted</option>
+                        <option value="usage">Most Used</option>
+                        <option value="recent">Most Recent</option>
+                    </select>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="includeArchived">
+                        Include Archived
+                    </label>
+                </div>
+            </div>
+
+            <!-- Solutions List -->
+            <div class="solutions-container">
+                <div class="solutions-list" id="solutionsList">
+                    <div class="empty-state">
+                        <div class="empty-icon">💡</div>
+                        <p>No solutions yet</p>
+                        <p class="empty-hint">Click "Add Solution" to create your first solution</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            <div class="pagination-bar" id="paginationBar">
+                <span class="pagination-info" id="paginationInfo">Showing 0-0 of 0</span>
+                <div class="pagination-controls">
+                    <button class="btn btn-sm btn-icon" id="prevPage" disabled>◀</button>
+                    <span class="page-number" id="pageNumber">1 / 1</span>
+                    <button class="btn btn-sm btn-icon" id="nextPage" disabled>▶</button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Add/Edit Solution Modal -->
+        <div class="modal" id="solutionModal">
+            <div class="modal-content modal-lg">
+                <div class="modal-header">
+                    <h2 id="modalTitle">Add New Solution</h2>
+                    <button class="modal-close" id="modalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="solutionForm">
+                        <input type="hidden" id="solutionId">
+                        
+                        <div class="form-section">
+                            <h3>Pattern Matching</h3>
+                            <p class="form-hint">Define patterns to match this solution to issues</p>
+                            
+                            <div class="form-group">
+                                <label for="issuePattern">Issue Type Pattern <span class="required">*</span></label>
+                                <input type="text" id="issuePattern" class="form-input" 
+                                       placeholder="e.g., NullPointerException or java.lang.NullPointerException" required>
+                                <span class="form-help">The exception or error type to match</span>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="messagePattern">Message Pattern (Optional)</label>
+                                <input type="text" id="messagePattern" class="form-input" 
+                                       placeholder="e.g., Cannot invoke method on null.*">
+                                <span class="form-help">Regex or keywords to match in the error message</span>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="stackPattern">Stack Trace Pattern (Optional)</label>
+                                <input type="text" id="stackPattern" class="form-input" 
+                                       placeholder="e.g., com.myapp.service.UserService">
+                                <span class="form-help">Pattern to match in the stack trace</span>
+                            </div>
+                        </div>
+                        
+                        <div class="form-section">
+                            <h3>Solution Details</h3>
+                            
+                            <div class="form-group">
+                                <label for="solutionTitle">Title <span class="required">*</span></label>
+                                <input type="text" id="solutionTitle" class="form-input" 
+                                       placeholder="Brief title describing the solution" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="solutionDescription">Description <span class="required">*</span></label>
+                                <textarea id="solutionDescription" class="form-textarea" rows="10"
+                                          placeholder="Detailed solution description. Markdown is supported.&#10;&#10;## Root Cause&#10;Describe what causes this issue...&#10;&#10;## Solution&#10;1. Step one&#10;2. Step two" required></textarea>
+                                <span class="form-help">Markdown formatting is supported</span>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+                    <button class="btn btn-primary" id="saveSolutionBtn">Save Solution</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- View Solution Modal -->
+        <div class="modal" id="viewModal">
+            <div class="modal-content modal-lg">
+                <div class="modal-header">
+                    <h2 id="viewModalTitle">Solution Details</h2>
+                    <button class="modal-close" id="viewModalClose">&times;</button>
+                </div>
+                <div class="modal-body" id="viewModalBody">
+                    <!-- Populated by JS -->
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="editSolutionBtn">✏️ Edit</button>
+                    <button class="btn btn-secondary" id="archiveSolutionBtn">📦 Archive</button>
+                    <div class="vote-buttons">
+                        <button class="btn btn-success" id="upvoteBtn">👍 Upvote</button>
+                        <button class="btn btn-danger" id="downvoteBtn">👎 Downvote</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete Confirmation Modal -->
+        <div class="modal" id="confirmModal">
+            <div class="modal-content modal-sm">
+                <div class="modal-header">
+                    <h2>Confirm Action</h2>
+                    <button class="modal-close" id="confirmModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p id="confirmMessage">Are you sure you want to archive this solution?</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="confirmCancelBtn">Cancel</button>
+                    <button class="btn btn-danger" id="confirmActionBtn">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/solutions.js"></script>
+</body>
+</html>
