@@ -36,8 +36,9 @@ public class IssueStore implements IssueRepository {
     private static final int MAX_FILTER_RESULTS = 10000;
     
     public IssueStore(int maxIssues) {
-        // Enforce a reasonable maximum to prevent memory exhaustion
-        this.maxIssues = Math.min(maxIssues, 50000);
+        // 0 or negative means unlimited, otherwise use the provided value
+        // For in-memory store, we still cap at a reasonable maximum for safety
+        this.maxIssues = (maxIssues <= 0) ? Integer.MAX_VALUE : maxIssues;
         this.issues = new ConcurrentLinkedDeque<>();
         this.listeners = new CopyOnWriteArrayList<>();
         this.totalIssuesCount = new AtomicLong(0);
@@ -66,9 +67,11 @@ public class IssueStore implements IssueRepository {
         serverCounts.computeIfAbsent(serverName, k -> new AtomicLong(0))
                 .incrementAndGet();
         
-        // Trim if exceeded max
-        while (issues.size() > maxIssues) {
-            issues.removeLast();
+        // Trim if exceeded max (skip if unlimited)
+        if (maxIssues < Integer.MAX_VALUE) {
+            while (issues.size() > maxIssues) {
+                issues.removeLast();
+            }
         }
         
         // Notify listeners

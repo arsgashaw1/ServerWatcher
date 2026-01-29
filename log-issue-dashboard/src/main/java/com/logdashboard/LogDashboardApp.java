@@ -4,11 +4,13 @@ import com.logdashboard.analysis.AnalysisService;
 import com.logdashboard.config.ConfigLoader;
 import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.store.DatabaseManager;
+import com.logdashboard.store.DumpProcessingStore;
 import com.logdashboard.store.H2IssueStore;
 import com.logdashboard.store.InfrastructureStore;
 import com.logdashboard.store.IssueRepository;
 import com.logdashboard.store.IssueStore;
 import com.logdashboard.watcher.ConfigFileWatcher;
+import com.logdashboard.watcher.DumpProcessingWatcher;
 import com.logdashboard.watcher.LogFileWatcher;
 import com.logdashboard.web.WebServer;
 
@@ -34,6 +36,8 @@ public class LogDashboardApp {
     private static IssueRepository issueStore;
     private static DatabaseManager databaseManager;
     private static InfrastructureStore infrastructureStore;
+    private static DumpProcessingStore dumpProcessingStore;
+    private static DumpProcessingWatcher dumpProcessingWatcher;
     private static AnalysisService analysisService;
     private static WebServer webServer;
     private static LogFileWatcher logWatcher;
@@ -143,6 +147,10 @@ public class LogDashboardApp {
                 infrastructureStore = new InfrastructureStore(databaseManager, config);
                 infrastructureStore.initialize();
                 
+                // Initialize dump processing store
+                dumpProcessingStore = new DumpProcessingStore(databaseManager);
+                dumpProcessingStore.initialize();
+                
                 if (config.hasAdminCredentials()) {
                     System.out.println("Infrastructure management enabled with admin authentication.");
                 } else {
@@ -159,6 +167,7 @@ public class LogDashboardApp {
                 }
                 issueStore = new IssueStore(config.getMaxIssuesDisplayed());
                 infrastructureStore = null;
+                dumpProcessingStore = null;
             }
         } else {
             System.out.println("Storage: In-memory (data will be lost on restart)");
@@ -169,19 +178,33 @@ public class LogDashboardApp {
         // Create the analysis service
         analysisService = new AnalysisService(issueStore);
         
-        // Create and start the web server
-        webServer = new WebServer(port, issueStore, analysisService, config);
-        if (infrastructureStore != null) {
-            webServer.setInfrastructureStore(infrastructureStore);
-        }
-        webServer.start();
-        
         // Create the log file watcher
         logWatcher = new LogFileWatcher(
             config,
             issueStore::addIssue,
             status -> System.out.println("[Watcher] " + status)
         );
+        
+        // Create the dump processing watcher (if store is available)
+        if (dumpProcessingStore != null) {
+            dumpProcessingWatcher = new DumpProcessingWatcher(
+                dumpProcessingStore,
+                status -> System.out.println(status)
+            );
+        }
+        
+        // Create and start the web server
+        webServer = new WebServer(port, issueStore, analysisService, config);
+        if (infrastructureStore != null) {
+            webServer.setInfrastructureStore(infrastructureStore);
+        }
+        if (dumpProcessingStore != null && dumpProcessingWatcher != null) {
+            webServer.setDumpProcessing(dumpProcessingStore, dumpProcessingWatcher);
+        }
+        // Pass ConfigLoader and LogFileWatcher for configuration management
+        webServer.setConfigLoader(configLoader);
+        webServer.setLogFileWatcher(logWatcher);
+        webServer.start();
         
         // Create the config file watcher
         configWatcher = new ConfigFileWatcher(
@@ -197,6 +220,9 @@ public class LogDashboardApp {
             System.out.println("Shutting down...");
             logWatcher.stop();
             configWatcher.stop();
+            if (dumpProcessingWatcher != null) {
+                dumpProcessingWatcher.stop();
+            }
             webServer.stop();
             // Close H2 database connection if it exists
             // This handles both normal H2 usage and any edge cases
@@ -209,6 +235,10 @@ public class LogDashboardApp {
         // Start the watchers
         logWatcher.start();
         configWatcher.start();
+        if (dumpProcessingWatcher != null) {
+            dumpProcessingWatcher.start();
+            System.out.println("Dump processing watcher started.");
+        }
         
         System.out.println("Log file watcher started.");
         System.out.println("Configuration file will be monitored for new servers.");

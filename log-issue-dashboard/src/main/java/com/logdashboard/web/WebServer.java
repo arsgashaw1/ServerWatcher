@@ -1,9 +1,13 @@
 package com.logdashboard.web;
 
 import com.logdashboard.analysis.AnalysisService;
+import com.logdashboard.config.ConfigLoader;
 import com.logdashboard.config.DashboardConfig;
+import com.logdashboard.store.DumpProcessingStore;
 import com.logdashboard.store.InfrastructureStore;
 import com.logdashboard.store.IssueRepository;
+import com.logdashboard.watcher.DumpProcessingWatcher;
+import com.logdashboard.watcher.LogFileWatcher;
 
 import org.apache.catalina.Context;
 import org.apache.catalina.LifecycleException;
@@ -23,6 +27,10 @@ public class WebServer {
     private final AnalysisService analysisService;
     private final DashboardConfig config;
     private InfrastructureStore infrastructureStore;
+    private DumpProcessingStore dumpProcessingStore;
+    private DumpProcessingWatcher dumpProcessingWatcher;
+    private ConfigLoader configLoader;
+    private LogFileWatcher logWatcher;
     private EventStreamServlet eventStreamServlet;
     
     public WebServer(int port, IssueRepository issueStore, AnalysisService analysisService, DashboardConfig config) {
@@ -38,6 +46,28 @@ public class WebServer {
      */
     public void setInfrastructureStore(InfrastructureStore infrastructureStore) {
         this.infrastructureStore = infrastructureStore;
+    }
+    
+    /**
+     * Sets the dump processing components.
+     */
+    public void setDumpProcessing(DumpProcessingStore store, DumpProcessingWatcher watcher) {
+        this.dumpProcessingStore = store;
+        this.dumpProcessingWatcher = watcher;
+    }
+    
+    /**
+     * Sets the config loader for configuration management.
+     */
+    public void setConfigLoader(ConfigLoader configLoader) {
+        this.configLoader = configLoader;
+    }
+    
+    /**
+     * Sets the log file watcher for dynamic directory management.
+     */
+    public void setLogFileWatcher(LogFileWatcher logWatcher) {
+        this.logWatcher = logWatcher;
     }
     
     /**
@@ -76,6 +106,21 @@ public class WebServer {
             InfraServlet infraServlet = new InfraServlet(infrastructureStore);
             Tomcat.addServlet(context, "infra", infraServlet);
             context.addServletMappingDecoded("/infra/*", "infra");
+        }
+        
+        // Add Dump Processing API servlet
+        if (dumpProcessingStore != null && infrastructureStore != null) {
+            DumpProcessServlet dumpServlet = new DumpProcessServlet(
+                dumpProcessingStore, infrastructureStore, dumpProcessingWatcher);
+            Tomcat.addServlet(context, "dump", dumpServlet);
+            context.addServletMappingDecoded("/dump/*", "dump");
+        }
+        
+        // Add Configuration API servlet for watch directory management
+        if (configLoader != null) {
+            ConfigApiServlet configServlet = new ConfigApiServlet(configLoader, config, logWatcher);
+            Tomcat.addServlet(context, "config", configServlet);
+            context.addServletMappingDecoded("/config/*", "config");
         }
         
         // Add Static file servlet

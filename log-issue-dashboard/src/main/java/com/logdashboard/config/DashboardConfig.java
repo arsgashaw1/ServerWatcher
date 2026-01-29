@@ -3,6 +3,7 @@ package com.logdashboard.config;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Configuration class for the Log Issue Dashboard.
@@ -16,11 +17,19 @@ public class DashboardConfig {
     private List<String> errorPatterns;
     private List<String> warningPatterns;
     private List<String> exclusionPatterns;  // Patterns to exclude (false positives)
+    private List<String> criticalPatterns;   // Patterns for CRITICAL severity
+    private List<Map<String, Object>> customRules;  // Custom detection rules
     private int pollingIntervalSeconds;
     private int maxIssuesDisplayed;
     private boolean enableSound;
     private String windowTitle;
     private int webServerPort;
+    
+    // Enhanced detection options
+    private int contextLinesBefore;  // Lines of context to capture before issue
+    private int contextLinesAfter;   // Lines of context to capture after issue
+    private boolean enableDeduplication;  // Deduplicate similar issues within time window
+    private boolean parseJsonLogs;   // Parse JSON-formatted log lines
     
     // Database configuration
     private String storageType; // "memory" or "h2"
@@ -57,11 +66,21 @@ public class DashboardConfig {
             ".*Success:.*Failed: 0.*",  // Success messages with zero failures
             ".*\\bFailed: 0\\b.*\\bSkipped: 0\\b.*"  // Summary lines with zero failures
         );
+        // Default critical patterns (severe issues)
+        this.criticalPatterns = new ArrayList<>(); // Uses built-in patterns if empty
+        this.customRules = new ArrayList<>();
         this.pollingIntervalSeconds = 2;
-        this.maxIssuesDisplayed = 500;
+        this.maxIssuesDisplayed = Integer.MAX_VALUE; // No limit
         this.enableSound = false;
         this.windowTitle = "Log Issue Dashboard";
         this.webServerPort = 8080;
+        
+        // Enhanced detection defaults
+        this.contextLinesBefore = 2;  // Capture 2 lines before issue
+        this.contextLinesAfter = 5;   // Capture 5 lines after issue
+        this.enableDeduplication = true;  // Enable deduplication by default
+        this.parseJsonLogs = true;    // Parse JSON logs by default
+        
         this.storageType = "h2"; // Default to H2 for persistence
         this.databasePath = "data/log-dashboard"; // Default database path
         this.adminUsername = null; // Must be configured in config file
@@ -122,6 +141,54 @@ public class DashboardConfig {
 
     public void setExclusionPatterns(List<String> exclusionPatterns) {
         this.exclusionPatterns = exclusionPatterns;
+    }
+
+    public List<String> getCriticalPatterns() {
+        return criticalPatterns;
+    }
+
+    public void setCriticalPatterns(List<String> criticalPatterns) {
+        this.criticalPatterns = criticalPatterns;
+    }
+
+    public List<Map<String, Object>> getCustomRules() {
+        return customRules;
+    }
+
+    public void setCustomRules(List<Map<String, Object>> customRules) {
+        this.customRules = customRules;
+    }
+
+    public int getContextLinesBefore() {
+        return contextLinesBefore;
+    }
+
+    public void setContextLinesBefore(int contextLinesBefore) {
+        this.contextLinesBefore = contextLinesBefore;
+    }
+
+    public int getContextLinesAfter() {
+        return contextLinesAfter;
+    }
+
+    public void setContextLinesAfter(int contextLinesAfter) {
+        this.contextLinesAfter = contextLinesAfter;
+    }
+
+    public boolean isEnableDeduplication() {
+        return enableDeduplication;
+    }
+
+    public void setEnableDeduplication(boolean enableDeduplication) {
+        this.enableDeduplication = enableDeduplication;
+    }
+
+    public boolean isParseJsonLogs() {
+        return parseJsonLogs;
+    }
+
+    public void setParseJsonLogs(boolean parseJsonLogs) {
+        this.parseJsonLogs = parseJsonLogs;
     }
 
     public int getPollingIntervalSeconds() {
