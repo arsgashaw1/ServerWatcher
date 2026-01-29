@@ -289,14 +289,25 @@ class SolutionsManager {
     }
     
     showEditModal(solution) {
-        document.getElementById('modalTitle').textContent = 'Edit Solution';
-        document.getElementById('solutionId').value = solution.id;
-        document.getElementById('issuePattern').value = solution.issuePattern || '';
-        document.getElementById('messagePattern').value = solution.messagePattern || '';
-        document.getElementById('stackPattern').value = solution.stackPattern || '';
-        document.getElementById('solutionTitle').value = solution.title || '';
-        document.getElementById('solutionDescription').value = solution.description || '';
-        document.getElementById('solutionModal').classList.add('active');
+        if (!solution) {
+            console.error('showEditModal: solution is null or undefined');
+            this.showError('Could not load solution for editing');
+            return;
+        }
+        
+        try {
+            document.getElementById('modalTitle').textContent = 'Edit Solution';
+            document.getElementById('solutionId').value = solution.id || '';
+            document.getElementById('issuePattern').value = solution.issuePattern || '';
+            document.getElementById('messagePattern').value = solution.messagePattern || '';
+            document.getElementById('stackPattern').value = solution.stackPattern || '';
+            document.getElementById('solutionTitle').value = solution.title || '';
+            document.getElementById('solutionDescription').value = solution.description || '';
+            document.getElementById('solutionModal').classList.add('active');
+        } catch (error) {
+            console.error('showEditModal error:', error);
+            this.showError('Failed to open edit modal');
+        }
     }
     
     closeModal() {
@@ -426,12 +437,24 @@ class SolutionsManager {
     }
     
     editSelectedSolution() {
-        if (this.selectedSolution) {
-            // Save reference before closing modal (which sets selectedSolution to null)
-            const solution = this.selectedSolution;
-            this.closeViewModal();
-            this.showEditModal(solution);
+        if (!this.selectedSolution) {
+            console.error('editSelectedSolution: no solution selected');
+            this.showError('No solution selected');
+            return;
         }
+        
+        // Create a copy of the solution object before closing modal
+        const solution = { ...this.selectedSolution };
+        console.log('Editing solution:', solution);
+        
+        // Close view modal first
+        document.getElementById('viewModal').classList.remove('active');
+        
+        // Then open edit modal (don't set selectedSolution to null yet)
+        this.showEditModal(solution);
+        
+        // Now clear the selected solution
+        this.selectedSolution = null;
     }
     
     // Voting
