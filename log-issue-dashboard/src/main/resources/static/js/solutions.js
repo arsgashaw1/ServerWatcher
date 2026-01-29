@@ -427,8 +427,10 @@ class SolutionsManager {
     
     editSelectedSolution() {
         if (this.selectedSolution) {
+            // Save reference before closing modal (which sets selectedSolution to null)
+            const solution = this.selectedSolution;
             this.closeViewModal();
-            this.showEditModal(this.selectedSolution);
+            this.showEditModal(solution);
         }
     }
     
