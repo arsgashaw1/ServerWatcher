@@ -313,17 +313,17 @@ public class SolutionServlet extends HttpServlet {
         
         IssueSolution solution = new IssueSolution(issuePattern, title, description);
         
-        // Set optional fields
-        if (json.has("messagePattern")) {
+        // Set optional fields (handle null values)
+        if (json.has("messagePattern") && !json.get("messagePattern").isJsonNull()) {
             solution.setMessagePattern(json.get("messagePattern").getAsString());
         }
-        if (json.has("stackPattern")) {
+        if (json.has("stackPattern") && !json.get("stackPattern").isJsonNull()) {
             solution.setStackPattern(json.get("stackPattern").getAsString());
         }
         
         // Set creator info from request
         String createdBy = req.getRemoteAddr();
-        if (json.has("createdBy")) {
+        if (json.has("createdBy") && !json.get("createdBy").isJsonNull()) {
             createdBy = json.get("createdBy").getAsString();
         }
         solution.setCreatedBy(createdBy);
@@ -362,23 +362,23 @@ public class SolutionServlet extends HttpServlet {
         
         // Use issue type as pattern, or custom pattern if provided
         String issuePattern = issue.get().getIssueType();
-        if (json.has("issuePattern")) {
+        if (json.has("issuePattern") && !json.get("issuePattern").isJsonNull()) {
             issuePattern = json.get("issuePattern").getAsString();
         }
         
         IssueSolution solution = new IssueSolution(issuePattern, title, description);
         
-        // Set optional patterns
-        if (json.has("messagePattern")) {
+        // Set optional patterns (handle null values)
+        if (json.has("messagePattern") && !json.get("messagePattern").isJsonNull()) {
             solution.setMessagePattern(json.get("messagePattern").getAsString());
         }
-        if (json.has("stackPattern")) {
+        if (json.has("stackPattern") && !json.get("stackPattern").isJsonNull()) {
             solution.setStackPattern(json.get("stackPattern").getAsString());
         }
         
         // Set creator info
         String createdBy = req.getRemoteAddr();
-        if (json.has("createdBy")) {
+        if (json.has("createdBy") && !json.get("createdBy").isJsonNull()) {
             createdBy = json.get("createdBy").getAsString();
         }
         solution.setCreatedBy(createdBy);
@@ -425,24 +425,22 @@ public class SolutionServlet extends HttpServlet {
         IssueSolution solution = existing.get();
         
         // Update fields if provided
-        if (json.has("issuePattern")) {
+        if (json.has("issuePattern") && !json.get("issuePattern").isJsonNull()) {
             solution.setIssuePattern(json.get("issuePattern").getAsString());
         }
         if (json.has("messagePattern")) {
-            String msgPattern = json.get("messagePattern").isJsonNull() ? null : json.get("messagePattern").getAsString();
-            solution.setMessagePattern(msgPattern);
+            solution.setMessagePattern(json.get("messagePattern").isJsonNull() ? null : json.get("messagePattern").getAsString());
         }
         if (json.has("stackPattern")) {
-            String stackPattern = json.get("stackPattern").isJsonNull() ? null : json.get("stackPattern").getAsString();
-            solution.setStackPattern(stackPattern);
+            solution.setStackPattern(json.get("stackPattern").isJsonNull() ? null : json.get("stackPattern").getAsString());
         }
-        if (json.has("title")) {
+        if (json.has("title") && !json.get("title").isJsonNull()) {
             solution.setSolutionTitle(json.get("title").getAsString());
         }
-        if (json.has("description")) {
+        if (json.has("description") && !json.get("description").isJsonNull()) {
             solution.setSolutionDescription(json.get("description").getAsString());
         }
-        if (json.has("status")) {
+        if (json.has("status") && !json.get("status").isJsonNull()) {
             try {
                 solution.setStatus(IssueSolution.Status.valueOf(json.get("status").getAsString()));
             } catch (IllegalArgumentException e) {
