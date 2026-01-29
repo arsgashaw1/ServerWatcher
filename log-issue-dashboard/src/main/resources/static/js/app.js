@@ -528,12 +528,223 @@ class LogDashboard {
                 <div class="detail-label">Stack Trace</div>
                 <pre class="stack-trace">${this.escapeHtml(issue.fullStackTrace)}</pre>
             </div>
+            
+            <div class="suggestions-section" id="suggestionsSection">
+                <div class="suggestions-header">
+                    <h3>💡 Suggested Solutions</h3>
+                    <button class="btn btn-sm btn-secondary" id="addSolutionBtn">+ Add Solution</button>
+                </div>
+                <div class="suggestions-list" id="suggestionsList">
+                    <div class="suggestions-loading">Loading suggestions...</div>
+                </div>
+            </div>
         `;
         
         document.getElementById('acknowledgeBtn').textContent = 
             issue.acknowledged ? 'Acknowledged ✓' : 'Acknowledge';
         
         document.getElementById('issueModal').classList.add('active');
+        
+        // Load suggestions for this issue
+        this.loadSuggestions(id);
+        
+        // Setup add solution button
+        document.getElementById('addSolutionBtn').addEventListener('click', () => this.showAddSolutionModal());
+    }
+    
+    async loadSuggestions(issueId) {
+        const listEl = document.getElementById('suggestionsList');
+        
+        try {
+            const response = await fetch(`/solutions/issue/${issueId}`);
+            const data = await response.json();
+            
+            if (data.suggestions && data.suggestions.length > 0) {
+                listEl.innerHTML = data.suggestions.map(suggestion => `
+                    <div class="suggestion-card" data-match-id="${suggestion.matchId}" data-solution-id="${suggestion.solutionId}">
+                        <div class="suggestion-header">
+                            <span class="suggestion-rating">${this.renderStars(suggestion.rating)} (${suggestion.upvotes})</span>
+                            <span class="suggestion-match-reason">${this.escapeHtml(suggestion.matchReason)}</span>
+                        </div>
+                        <div class="suggestion-title">${this.escapeHtml(suggestion.title)}</div>
+                        <div class="suggestion-description">${this.truncateText(this.escapeHtml(suggestion.description), 200)}</div>
+                        <div class="suggestion-actions">
+                            <button class="btn btn-xs btn-secondary view-solution-btn">View Details</button>
+                            <button class="btn btn-xs btn-success helpful-btn" title="This was helpful">👍 Helpful</button>
+                            <button class="btn btn-xs btn-danger not-helpful-btn" title="Not helpful">👎</button>
+                        </div>
+                    </div>
+                `).join('');
+                
+                // Attach event handlers
+                listEl.querySelectorAll('.suggestion-card').forEach(card => {
+                    const matchId = card.dataset.matchId;
+                    const solutionId = card.dataset.solutionId;
+                    
+                    card.querySelector('.view-solution-btn').addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        window.open(`/solutions.html#${solutionId}`, '_blank');
+                    });
+                    
+                    card.querySelector('.helpful-btn').addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.recordSuggestionFeedback(matchId, true, card);
+                    });
+                    
+                    card.querySelector('.not-helpful-btn').addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.recordSuggestionFeedback(matchId, false, card);
+                    });
+                });
+            } else {
+                listEl.innerHTML = `
+                    <div class="no-suggestions">
+                        <p>No suggestions found for this issue type.</p>
+                        <p class="hint">Click "Add Solution" to help others facing similar issues.</p>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Error loading suggestions:', error);
+            listEl.innerHTML = `
+                <div class="no-suggestions">
+                    <p>Could not load suggestions.</p>
+                </div>
+            `;
+        }
+    }
+    
+    async recordSuggestionFeedback(matchId, helpful, cardEl) {
+        try {
+            const response = await fetch(`/solutions/match/${matchId}/feedback`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ helpful })
+            });
+            
+            if (response.ok) {
+                // Update UI to show feedback was recorded
+                const actionsEl = cardEl.querySelector('.suggestion-actions');
+                actionsEl.innerHTML = `<span class="feedback-recorded">${helpful ? '👍 Marked as helpful' : '👎 Marked as not helpful'}</span>`;
+            }
+        } catch (error) {
+            console.error('Error recording feedback:', error);
+        }
+    }
+    
+    showAddSolutionModal() {
+        if (!this.selectedIssue) return;
+        
+        // Create and show the add solution modal
+        const modal = document.createElement('div');
+        modal.className = 'modal active';
+        modal.id = 'addSolutionModal';
+        modal.innerHTML = `
+            <div class="modal-content modal-lg">
+                <div class="modal-header">
+                    <h2>Add Solution for: ${this.escapeHtml(this.selectedIssue.issueType)}</h2>
+                    <button class="modal-close" id="addSolutionModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="addSolutionForm">
+                        <div class="form-group">
+                            <label>Issue Pattern</label>
+                            <input type="text" id="newSolutionPattern" class="form-input" 
+                                   value="${this.escapeHtml(this.selectedIssue.issueType)}" required>
+                            <span class="form-help">The exception/error type to match</span>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Message Pattern (Optional)</label>
+                            <input type="text" id="newSolutionMessagePattern" class="form-input" 
+                                   placeholder="Optional regex to match message">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Solution Title <span class="required">*</span></label>
+                            <input type="text" id="newSolutionTitle" class="form-input" 
+                                   placeholder="Brief title for the solution" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Solution Description <span class="required">*</span></label>
+                            <textarea id="newSolutionDescription" class="form-textarea" rows="8"
+                                      placeholder="Detailed description of the solution. Markdown supported." required></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="cancelAddSolutionBtn">Cancel</button>
+                    <button class="btn btn-primary" id="saveNewSolutionBtn">Save Solution</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Event handlers
+        document.getElementById('addSolutionModalClose').addEventListener('click', () => this.closeAddSolutionModal());
+        document.getElementById('cancelAddSolutionBtn').addEventListener('click', () => this.closeAddSolutionModal());
+        document.getElementById('saveNewSolutionBtn').addEventListener('click', () => this.saveNewSolution());
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) this.closeAddSolutionModal();
+        });
+    }
+    
+    closeAddSolutionModal() {
+        const modal = document.getElementById('addSolutionModal');
+        if (modal) {
+            modal.remove();
+        }
+    }
+    
+    async saveNewSolution() {
+        const form = document.getElementById('addSolutionForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+        
+        const data = {
+            issuePattern: document.getElementById('newSolutionPattern').value,
+            messagePattern: document.getElementById('newSolutionMessagePattern').value || null,
+            title: document.getElementById('newSolutionTitle').value,
+            description: document.getElementById('newSolutionDescription').value
+        };
+        
+        try {
+            const response = await fetch(`/solutions/from-issue/${this.selectedIssue.id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            
+            if (response.ok) {
+                this.closeAddSolutionModal();
+                // Reload suggestions to show the new one
+                this.loadSuggestions(this.selectedIssue.id);
+            } else {
+                const error = await response.json();
+                alert(error.error || 'Failed to save solution');
+            }
+        } catch (error) {
+            console.error('Error saving solution:', error);
+            alert('Failed to save solution');
+        }
+    }
+    
+    renderStars(rating) {
+        const fullStars = Math.floor(rating);
+        let stars = '';
+        for (let i = 0; i < 5; i++) {
+            stars += i < fullStars ? '★' : '☆';
+        }
+        return `<span class="stars">${stars}</span>`;
+    }
+    
+    truncateText(text, length) {
+        if (!text || text.length <= length) return text;
+        return text.substring(0, length) + '...';
     }
     
     closeModal() {
