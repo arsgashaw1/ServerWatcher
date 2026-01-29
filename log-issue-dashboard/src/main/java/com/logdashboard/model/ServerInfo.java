@@ -1,11 +1,13 @@
 package com.logdashboard.model;
 
 /**
- * Model class representing server information for infrastructure management.
+ * Model class representing server information (sub-server) for infrastructure management.
+ * Each ServerInfo belongs to a ServerGroup (parent server).
  */
 public class ServerInfo {
     
     private int id;
+    private int groupId;  // Foreign key to ServerGroup
     private String serverName;
     private String dbType;
     private int port;
@@ -14,8 +16,9 @@ public class ServerInfo {
     public ServerInfo() {
     }
     
-    public ServerInfo(int id, String serverName, String dbType, int port, String note) {
+    public ServerInfo(int id, int groupId, String serverName, String dbType, int port, String note) {
         this.id = id;
+        this.groupId = groupId;
         this.serverName = serverName;
         this.dbType = dbType;
         this.port = port;
@@ -30,6 +33,14 @@ public class ServerInfo {
     
     public void setId(int id) {
         this.id = id;
+    }
+    
+    public int getGroupId() {
+        return groupId;
+    }
+    
+    public void setGroupId(int groupId) {
+        this.groupId = groupId;
     }
     
     public String getServerName() {
@@ -68,6 +79,7 @@ public class ServerInfo {
     public String toString() {
         return "ServerInfo{" +
                 "id=" + id +
+                ", groupId=" + groupId +
                 ", serverName='" + serverName + '\'' +
                 ", dbType='" + dbType + '\'' +
                 ", port=" + port +
