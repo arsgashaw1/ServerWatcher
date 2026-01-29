@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel | Dump Processing</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/infra.css">
+    <link rel="stylesheet" href="/css/dump-processing.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>
+                    <span class="logo">🛡️</span>
+                    Sentinel
+                </h1>
+                <span class="version">v2.0</span>
+            </div>
+            <nav class="header-nav">
+                <a href="/" class="nav-link">Dashboard</a>
+                <a href="/servers.html" class="nav-link">Servers</a>
+                <a href="/vms.html" class="nav-link">VMs</a>
+                <a href="/dump-processing.html" class="nav-link active">Dump Processing</a>
+                <a href="/config.html" class="nav-link">Config</a>
+            </nav>
+            <div class="header-right">
+                <button class="btn btn-icon" id="themeToggle" title="Toggle theme">
+                    🌙
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="infra-main">
+            <div class="infra-container">
+                <div class="infra-header">
+                    <h2>📦 Database Dump Processing</h2>
+                    <button class="btn btn-primary" id="addConfigBtn">
+                        <span>+</span> Add Configuration
+                    </button>
+                </div>
+                
+                <!-- Status Overview -->
+                <div class="status-overview" id="statusOverview">
+                    <div class="status-card">
+                        <div class="status-icon">⚡</div>
+                        <div class="status-info">
+                            <span class="status-label">Watcher Status</span>
+                            <span class="status-value" id="watcherStatus">--</span>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <div class="status-icon">📋</div>
+                        <div class="status-info">
+                            <span class="status-label">Configurations</span>
+                            <span class="status-value" id="configCount">--</span>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <div class="status-icon">⏳</div>
+                        <div class="status-info">
+                            <span class="status-label">Pending Files</span>
+                            <span class="status-value" id="pendingCount">--</span>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <div class="status-icon">🔄</div>
+                        <div class="status-info">
+                            <span class="status-label">Processing</span>
+                            <span class="status-value" id="processingCount">--</span>
+                        </div>
+                    </div>
+                    <div class="status-card success">
+                        <div class="status-icon">✅</div>
+                        <div class="status-info">
+                            <span class="status-label">Completed</span>
+                            <span class="status-value" id="completedCount">--</span>
+                        </div>
+                    </div>
+                    <div class="status-card error">
+                        <div class="status-icon">❌</div>
+                        <div class="status-info">
+                            <span class="status-label">Failed</span>
+                            <span class="status-value" id="failedCount">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Admin Login Section -->
+                <div class="admin-section" id="adminSection">
+                    <div class="admin-toggle" id="adminToggle">
+                        <span>🔐 Admin Access</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="admin-form" id="adminForm" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="adminUsername">Username</label>
+                                <input type="text" id="adminUsername" placeholder="Enter admin username">
+                            </div>
+                            <div class="form-group">
+                                <label for="adminPassword">Password</label>
+                                <input type="password" id="adminPassword" placeholder="Enter admin password">
+                            </div>
+                            <button class="btn btn-secondary" id="loginBtn">Login</button>
+                        </div>
+                        <div class="admin-status" id="adminStatus"></div>
+                    </div>
+                </div>
+
+                <!-- Config Table -->
+                <div class="infra-table-container">
+                    <table class="infra-table" id="configTable">
+                        <thead>
+                            <tr>
+                                <th>No</th>
+                                <th>Server Name</th>
+                                <th>DB Type</th>
+                                <th>Dump Folder</th>
+                                <th>Threshold</th>
+                                <th>Status</th>
+                                <th>Last Run</th>
+                                <th class="admin-only" style="display: none;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="configTableBody">
+                            <tr class="empty-row">
+                                <td colspan="8">
+                                    <div class="empty-state">
+                                        <div class="empty-icon">📦</div>
+                                        <p>No dump processing configurations yet</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Files Section (shown when a config is selected) -->
+                <div class="files-section" id="filesSection" style="display: none;">
+                    <div class="files-header">
+                        <h3>📁 Files for: <span id="selectedConfigName">--</span></h3>
+                        <button class="btn btn-secondary btn-sm" id="closeFilesBtn">Close</button>
+                    </div>
+                    
+                    <!-- File Status Summary -->
+                    <div class="file-status-summary" id="fileStatusSummary">
+                        <div class="file-status-card pending" data-filter="PENDING">
+                            <div class="file-status-icon">⏳</div>
+                            <div class="file-status-info">
+                                <span class="file-status-count" id="filePendingCount">0</span>
+                                <span class="file-status-label">Queued</span>
+                            </div>
+                        </div>
+                        <div class="file-status-card processing" data-filter="PROCESSING">
+                            <div class="file-status-icon">🔄</div>
+                            <div class="file-status-info">
+                                <span class="file-status-count" id="fileProcessingCount">0</span>
+                                <span class="file-status-label">Processing</span>
+                            </div>
+                        </div>
+                        <div class="file-status-card completed" data-filter="COMPLETED">
+                            <div class="file-status-icon">✅</div>
+                            <div class="file-status-info">
+                                <span class="file-status-count" id="fileCompletedCount">0</span>
+                                <span class="file-status-label">Completed</span>
+                            </div>
+                        </div>
+                        <div class="file-status-card failed" data-filter="FAILED">
+                            <div class="file-status-icon">❌</div>
+                            <div class="file-status-info">
+                                <span class="file-status-count" id="fileFailedCount">0</span>
+                                <span class="file-status-label">Failed</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Filter Tabs -->
+                    <div class="file-filter-tabs">
+                        <button class="filter-tab active" data-filter="ALL">All Files</button>
+                        <button class="filter-tab" data-filter="PENDING">Queued</button>
+                        <button class="filter-tab" data-filter="PROCESSING">Processing</button>
+                        <button class="filter-tab" data-filter="COMPLETED">Completed</button>
+                        <button class="filter-tab" data-filter="FAILED">Failed</button>
+                    </div>
+                    
+                    <div class="files-table-container">
+                        <table class="infra-table" id="filesTable">
+                            <thead>
+                                <tr>
+                                    <th>File Name</th>
+                                    <th>Size</th>
+                                    <th>First Seen</th>
+                                    <th>Age</th>
+                                    <th>Status</th>
+                                    <th>Retries</th>
+                                    <th>Process Time</th>
+                                    <th>Output</th>
+                                </tr>
+                            </thead>
+                            <tbody id="filesTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Add/Edit Config Modal -->
+        <div class="modal" id="configModal">
+            <div class="modal-content modal-lg">
+                <div class="modal-header">
+                    <h2 id="modalTitle">Add Dump Processing Configuration</h2>
+                    <button class="modal-close" id="modalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="configForm">
+                        <input type="hidden" id="configId">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="serverName">Server Name *</label>
+                                <input type="text" id="serverName" required placeholder="e.g., MAT12Q3S">
+                                <small class="form-help">A unique name to identify this configuration</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="dbType">Database Type *</label>
+                                <select id="dbType" required>
+                                    <option value="">Select DB Type</option>
+                                    <option value="SQLITE">SQLite</option>
+                                    <option value="DATACOM">Datacom</option>
+                                </select>
+                                <small class="form-help">Type of database for extraction</small>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="dbFolder">DB Folder (Script Location) *</label>
+                            <input type="text" id="dbFolder" required placeholder="/plexc1/u/users/db">
+                            <small class="form-help">Folder containing ExtractMDB.do.sh script</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="dumpFolder">Dump Folder (Monitor Location) *</label>
+                            <input type="text" id="dumpFolder" required placeholder="/plexc1/u/users/dump">
+                            <small class="form-help">Folder to monitor for .mdb files</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="javaPath">Java Path *</label>
+                            <input type="text" id="javaPath" required placeholder="/sys/java64bt/v8r0m0/usr/lpp/java/J8.0_64/">
+                            <small class="form-help">Path to Java installation</small>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="thresholdMinutes">Threshold (minutes) *</label>
+                                <input type="number" id="thresholdMinutes" required min="1" value="1">
+                                <small class="form-help">Wait time before processing (default: 1 min)</small>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="enabled" checked>
+                                <span>Enabled</span>
+                            </label>
+                            <small class="form-help">Enable or disable this configuration</small>
+                        </div>
+                        
+                        <!-- Command Preview -->
+                        <div class="command-preview" id="commandPreview">
+                            <label>Command Preview:</label>
+                            <code id="commandPreviewText">--</code>
+                        </div>
+                        
+                        <!-- Validation Result -->
+                        <div class="validation-result" id="validationResult" style="display: none;">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="validateBtn">Validate</button>
+                    <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+                    <button class="btn btn-primary" id="saveBtn">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete Confirmation Modal -->
+        <div class="modal" id="deleteModal">
+            <div class="modal-content modal-sm">
+                <div class="modal-header">
+                    <h2>Confirm Delete</h2>
+                    <button class="modal-close" id="deleteModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete this configuration?</p>
+                    <p class="delete-warning">This will also delete all file tracking records.</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="deleteCancelBtn">Cancel</button>
+                    <button class="btn btn-danger" id="deleteConfirmBtn">Delete</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Output Modal -->
+        <div class="modal" id="outputModal">
+            <div class="modal-content modal-lg">
+                <div class="modal-header">
+                    <h2>Processing Output</h2>
+                    <button class="modal-close" id="outputModalClose">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <pre id="outputContent" class="output-content"></pre>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="outputCloseBtn">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/dump-processing.js"></script>
+</body>
+</html>
