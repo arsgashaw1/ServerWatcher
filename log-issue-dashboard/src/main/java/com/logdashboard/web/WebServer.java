@@ -84,6 +84,13 @@ public class WebServer {
         // Configure connector
         Connector connector = tomcat.getConnector();
         connector.setAsyncTimeout(600000); // 10 minutes for SSE
+
+        // Compress text responses (issue lists with stack traces compress ~10x). The live event
+        // stream (text/event-stream) is deliberately not listed so events are flushed immediately.
+        connector.setProperty("compression", "on");
+        connector.setProperty("compressionMinSize", "1024");
+        connector.setProperty("compressibleMimeType",
+            "text/html,text/css,text/plain,text/javascript,application/javascript,application/json");
         
         // Create context
         String contextPath = "";

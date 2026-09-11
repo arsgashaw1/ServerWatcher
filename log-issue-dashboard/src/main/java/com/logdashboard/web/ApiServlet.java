@@ -33,7 +33,6 @@ import java.util.*;
 public class ApiServlet extends HttpServlet {
     
     private static final Gson GSON = new GsonBuilder()
-            .setPrettyPrinting()
             .setDateFormat("yyyy-MM-dd'T'HH:mm:ss")
             .create();
     
