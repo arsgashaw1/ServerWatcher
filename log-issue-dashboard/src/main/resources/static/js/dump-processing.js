@@ -84,11 +84,14 @@ document.addEventListener('DOMContentLoaded', () => {
         adminSection.style.display = 'none';
     }
     
-    // Auto-refresh status every 30 seconds
-    setInterval(loadStatus, 30000);
-    
-    // Auto-refresh configs every 60 seconds
-    setInterval(loadConfigs, 60000);
+    // Auto-refresh status every 30 seconds and configs every 60 seconds (skipped while the tab is hidden)
+    setInterval(() => { if (!document.hidden) loadStatus(); }, 30000);
+    setInterval(() => { if (!document.hidden) loadConfigs(); }, 60000);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            loadStatus();
+        }
+    });
 });
 
 function setupEventListeners() {

@@ -22,6 +22,10 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -51,15 +55,71 @@ public class EventStreamServlet extends HttpServlet {
     // This is necessary because PrintWriter is not thread-safe and concurrent
     // writes can corrupt Tomcat's internal character encoder buffers
     private final ConcurrentHashMap<AsyncContext, ReentrantLock> clientLocks;
+
+    private static final long HEARTBEAT_INTERVAL_SECONDS = 30;
+    private final ScheduledExecutorService dispatcher;
     
     public EventStreamServlet(IssueRepository issueStore) {
         this.issueStore = issueStore;
         this.clients = new CopyOnWriteArrayList<>();
         this.viewerInfoMap = new ConcurrentHashMap<>();
         this.clientLocks = new ConcurrentHashMap<>();
-        
-        // Register listener for new issues
-        issueStore.addListener(this::broadcastIssue);
+        this.dispatcher = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "sse-dispatcher");
+            t.setDaemon(true);
+            return t;
+        });
+
+        // Register listener for new issues. Broadcasting runs on the dispatcher thread so a
+        // slow or stalled browser connection never blocks the log file watcher.
+        issueStore.addListener(issue -> dispatch(() -> broadcastIssue(issue)));
+
+        // Periodic heartbeat keeps connections alive through proxies and detects dead
+        // clients, which would otherwise hold one of the limited SSE slots indefinitely
+        dispatcher.scheduleWithFixedDelay(this::sendHeartbeat,
+            HEARTBEAT_INTERVAL_SECONDS, HEARTBEAT_INTERVAL_SECONDS, TimeUnit.SECONDS);
+    }
+
+    private void dispatch(Runnable task) {
+        try {
+            dispatcher.execute(task);
+        } catch (RejectedExecutionException e) {
+            // Dispatcher shut down
+        }
+    }
+
+    /**
+     * Sends an SSE comment to every client and removes clients that fail.
+     */
+    private void sendHeartbeat() {
+        List<AsyncContext> failedClients = new ArrayList<>();
+        for (AsyncContext client : clients) {
+            ReentrantLock lock = clientLocks.get(client);
+            if (lock == null) {
+                continue;
+            }
+            lock.lock();
+            try {
+                PrintWriter out = client.getResponse().getWriter();
+                out.write(": heartbeat\n\n");
+                out.flush();
+                if (out.checkError()) {
+                    failedClients.add(client);
+                }
+            } catch (Exception e) {
+                failedClients.add(client);
+            } finally {
+                lock.unlock();
+            }
+        }
+        for (AsyncContext client : failedClients) {
+            removeClient(client);
+            try {
+                client.complete();
+            } catch (Exception ignored) {
+                // Already completed or in error state
+            }
+        }
     }
     
     /**
@@ -199,15 +259,12 @@ public class EventStreamServlet extends HttpServlet {
             // Schedule broadcast on a separate thread to avoid issues with
             // calling from async listener context (onComplete/onError/onTimeout)
             // where the connection may be in an invalid state
-            new Thread(() -> {
-                try {
-                    // Small delay to ensure async context cleanup is complete
-                    Thread.sleep(50);
-                    broadcastViewers();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }, "viewer-broadcast").start();
+            // Small delay to ensure async context cleanup is complete
+            try {
+                dispatcher.schedule(this::broadcastViewers, 50, TimeUnit.MILLISECONDS);
+            } catch (RejectedExecutionException e) {
+                // Dispatcher shut down
+            }
         }
     }
     

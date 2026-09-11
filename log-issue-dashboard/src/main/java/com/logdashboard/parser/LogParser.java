@@ -58,129 +58,141 @@ public class LogParser {
         Pattern.compile("^\\s*\\{.*\"(level|severity|log_level|loglevel)\".*\\}\\s*$", Pattern.CASE_INSENSITIVE);
     
     // Pattern to detect timestamps at the start of lines
-    private static final Pattern TIMESTAMP_PATTERN = 
+    private static final Pattern TIMESTAMP_PATTERN =
         Pattern.compile("^\\d{4}[-/]\\d{2}[-/]\\d{2}[T\\s]\\d{2}:\\d{2}");
+
+    // Pattern to extract exception class names (precompiled; used for every detected issue)
+    private static final Pattern EXCEPTION_TYPE_PATTERN =
+        Pattern.compile("([\\w.$]+(?:Exception|Error|Throwable))");
+
+    // Patterns used to normalize messages for deduplication fingerprints
+    private static final Pattern FP_DATE = Pattern.compile("\\d{4}[-/]\\d{2}[-/]\\d{2}");
+    private static final Pattern FP_TIME = Pattern.compile("\\d{2}:\\d{2}:\\d{2}[.,]?\\d*");
+    private static final Pattern FP_UUID =
+        Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+    private static final Pattern FP_NUMBER = Pattern.compile("\\b\\d+\\b");
+    private static final Pattern FP_HEX = Pattern.compile("0x[0-9a-fA-F]+");
     
     // Built-in critical patterns for severe issues
     private static final List<Pattern> BUILTIN_CRITICAL_PATTERNS = Arrays.asList(
         // OutOfMemory errors
-        Pattern.compile(".*OutOfMemory.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*java\\.lang\\.OutOfMemoryError.*"),
-        Pattern.compile(".*GC overhead limit exceeded.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*Java heap space.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*unable to create new native thread.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*OutOfMemory.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*java\\.lang\\.OutOfMemoryError.*"),
+        compileForFind(".*GC overhead limit exceeded.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*Java heap space.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*unable to create new native thread.*", Pattern.CASE_INSENSITIVE),
         
         // Thread/Deadlock issues
-        Pattern.compile(".*deadlock.*detected.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*ThreadDeath.*"),
-        Pattern.compile(".*DEADLOCK.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*deadlock.*detected.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*ThreadDeath.*"),
+        compileForFind(".*DEADLOCK.*", Pattern.CASE_INSENSITIVE),
         
         // System crashes
-        Pattern.compile(".*FATAL.*ERROR.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*system.*crash.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*JVM.*crash.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*core\\s+dumped.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*Segmentation fault.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*SIGSEGV.*"),
-        Pattern.compile(".*SIGKILL.*"),
-        Pattern.compile(".*SIGABRT.*"),
+        compileForFind(".*FATAL.*ERROR.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*system.*crash.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*JVM.*crash.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*core\\s+dumped.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*Segmentation fault.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*SIGSEGV.*"),
+        compileForFind(".*SIGKILL.*"),
+        compileForFind(".*SIGABRT.*"),
         
         // Database critical
-        Pattern.compile(".*database.*connection.*lost.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*too many connections.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*tablespace.*full.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*disk.*full.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*no space left.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*database.*connection.*lost.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*too many connections.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*tablespace.*full.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*disk.*full.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*no space left.*", Pattern.CASE_INSENSITIVE),
         
         // Security critical
-        Pattern.compile(".*authentication.*fail.*multiple.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*unauthorized.*access.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*SSL.*handshake.*fail.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*certificate.*expired.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*authentication.*fail.*multiple.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*unauthorized.*access.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*SSL.*handshake.*fail.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*certificate.*expired.*", Pattern.CASE_INSENSITIVE),
         
         // Service critical
-        Pattern.compile(".*service.*unavailable.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*application.*shutdown.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*circuit.*breaker.*open.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*service.*unavailable.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*application.*shutdown.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*circuit.*breaker.*open.*", Pattern.CASE_INSENSITIVE),
         
         // StackOverflow
-        Pattern.compile(".*StackOverflowError.*")
+        compileForFind(".*StackOverflowError.*")
     );
     
     // Built-in error patterns for common issues
     private static final List<Pattern> BUILTIN_ERROR_PATTERNS = Arrays.asList(
         // Connection errors
-        Pattern.compile(".*Connection refused.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*Connection reset.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*Connection timed out.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*SocketException.*"),
-        Pattern.compile(".*SocketTimeoutException.*"),
-        Pattern.compile(".*ConnectException.*"),
-        Pattern.compile(".*UnknownHostException.*"),
+        compileForFind(".*Connection refused.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*Connection reset.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*Connection timed out.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*SocketException.*"),
+        compileForFind(".*SocketTimeoutException.*"),
+        compileForFind(".*ConnectException.*"),
+        compileForFind(".*UnknownHostException.*"),
         
         // Timeout errors
-        Pattern.compile(".*timeout.*exceeded.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*request.*timeout.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*TimeoutException.*"),
-        Pattern.compile(".*ReadTimeoutException.*"),
-        Pattern.compile(".*WriteTimeoutException.*"),
+        compileForFind(".*timeout.*exceeded.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*request.*timeout.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*TimeoutException.*"),
+        compileForFind(".*ReadTimeoutException.*"),
+        compileForFind(".*WriteTimeoutException.*"),
         
         // Resource errors
-        Pattern.compile(".*resource.*exhausted.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*pool.*exhausted.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*queue.*full.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*rate.*limit.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*resource.*exhausted.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*pool.*exhausted.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*queue.*full.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*rate.*limit.*", Pattern.CASE_INSENSITIVE),
         
         // I/O errors
-        Pattern.compile(".*IOException.*"),
-        Pattern.compile(".*FileNotFoundException.*"),
-        Pattern.compile(".*EOFException.*"),
-        Pattern.compile(".*AccessDeniedException.*"),
+        compileForFind(".*IOException.*"),
+        compileForFind(".*FileNotFoundException.*"),
+        compileForFind(".*EOFException.*"),
+        compileForFind(".*AccessDeniedException.*"),
         
         // Database errors
-        Pattern.compile(".*SQLException.*"),
-        Pattern.compile(".*DataAccessException.*"),
-        Pattern.compile(".*TransactionException.*"),
-        Pattern.compile(".*OptimisticLockingFailureException.*"),
-        Pattern.compile(".*DeadlockLoserDataAccessException.*"),
-        Pattern.compile(".*constraint.*violation.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*SQLException.*"),
+        compileForFind(".*DataAccessException.*"),
+        compileForFind(".*TransactionException.*"),
+        compileForFind(".*OptimisticLockingFailureException.*"),
+        compileForFind(".*DeadlockLoserDataAccessException.*"),
+        compileForFind(".*constraint.*violation.*", Pattern.CASE_INSENSITIVE),
         
         // HTTP errors
-        Pattern.compile(".*HTTP.*[45]\\d{2}.*"),
-        Pattern.compile(".*status.*code.*[45]\\d{2}.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*HTTP.*[45]\\d{2}.*"),
+        compileForFind(".*status.*code.*[45]\\d{2}.*", Pattern.CASE_INSENSITIVE),
         
         // Authentication errors
-        Pattern.compile(".*authentication.*failed.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*AuthenticationException.*"),
-        Pattern.compile(".*InvalidCredentialsException.*"),
-        Pattern.compile(".*access.*denied.*", Pattern.CASE_INSENSITIVE)
+        compileForFind(".*authentication.*failed.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*AuthenticationException.*"),
+        compileForFind(".*InvalidCredentialsException.*"),
+        compileForFind(".*access.*denied.*", Pattern.CASE_INSENSITIVE)
     );
     
     // Built-in warning patterns
     private static final List<Pattern> BUILTIN_WARNING_PATTERNS = Arrays.asList(
         // Performance warnings
-        Pattern.compile(".*slow.*query.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*performance.*degraded.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*high.*cpu.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*high.*memory.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*latency.*high.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*slow.*query.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*performance.*degraded.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*high.*cpu.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*high.*memory.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*latency.*high.*", Pattern.CASE_INSENSITIVE),
         
         // Deprecation warnings
-        Pattern.compile(".*deprecated.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*deprecated.*", Pattern.CASE_INSENSITIVE),
         
         // Resource warnings
-        Pattern.compile(".*memory.*usage.*high.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*disk.*usage.*high.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*pool.*near.*capacity.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*approaching.*limit.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*memory.*usage.*high.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*disk.*usage.*high.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*pool.*near.*capacity.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*approaching.*limit.*", Pattern.CASE_INSENSITIVE),
         
         // Retry warnings
-        Pattern.compile(".*retry.*attempt.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*retrying.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*retry.*attempt.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*retrying.*", Pattern.CASE_INSENSITIVE),
         
         // Configuration warnings
-        Pattern.compile(".*configuration.*missing.*", Pattern.CASE_INSENSITIVE),
-        Pattern.compile(".*using.*default.*", Pattern.CASE_INSENSITIVE)
+        compileForFind(".*configuration.*missing.*", Pattern.CASE_INSENSITIVE),
+        compileForFind(".*using.*default.*", Pattern.CASE_INSENSITIVE)
     );
     
     // Context lines to capture before/after an issue
@@ -220,14 +232,70 @@ public class LogParser {
     
     private List<Pattern> compilePatterns(List<String> patterns) {
         List<Pattern> compiled = new ArrayList<>();
+        if (patterns == null) {
+            return compiled;
+        }
         for (String pattern : patterns) {
             try {
-                compiled.add(Pattern.compile(pattern, Pattern.CASE_INSENSITIVE));
+                compiled.add(compileForFind(pattern, Pattern.CASE_INSENSITIVE));
             } catch (Exception e) {
                 System.err.println("Invalid pattern: " + pattern + " - " + e.getMessage());
             }
         }
         return compiled;
+    }
+
+    /**
+     * Compiles a pattern that will only be used with {@link Matcher#find()}.
+     *
+     * Detection patterns are conventionally written as ".*Foo.*". With find() the
+     * surrounding ".*" are redundant, but they make every non-matching line cost
+     * O(n^2) backtracking per pattern. Since almost every log line goes through
+     * ~90 patterns, stripping them is the single largest CPU saving in parsing.
+     * The match result is identical; falls back to the original if stripping
+     * yields an invalid expression.
+     */
+    static Pattern compileForFind(String regex) {
+        return compileForFind(regex, 0);
+    }
+
+    static Pattern compileForFind(String regex, int flags) {
+        String stripped = stripRedundantWildcards(regex);
+        if (!stripped.equals(regex)) {
+            try {
+                return Pattern.compile(stripped, flags);
+            } catch (java.util.regex.PatternSyntaxException e) {
+                // Fall through to the original expression
+            }
+        }
+        return Pattern.compile(regex, flags);
+    }
+
+    static String stripRedundantWildcards(String regex) {
+        if (regex == null || regex.contains("\\Q")) {
+            return regex;
+        }
+        String result = regex;
+        if (result.startsWith(".*?")) {
+            result = result.substring(3);
+        } else if (result.startsWith(".*") && !result.startsWith(".*+")) {
+            result = result.substring(2);
+        }
+        if (result.endsWith(".*?") && !isEscaped(result, result.length() - 3)) {
+            result = result.substring(0, result.length() - 3);
+        } else if (result.endsWith(".*") && !isEscaped(result, result.length() - 2)) {
+            result = result.substring(0, result.length() - 2);
+        }
+        return result;
+    }
+
+    /** Returns true if the character at index is preceded by an odd number of backslashes. */
+    private static boolean isEscaped(String s, int index) {
+        int backslashes = 0;
+        for (int i = index - 1; i >= 0 && s.charAt(i) == '\\'; i--) {
+            backslashes++;
+        }
+        return backslashes % 2 == 1;
     }
     
     private List<CustomRule> loadCustomRules(DashboardConfig config) {
@@ -239,7 +307,7 @@ public class LogParser {
                 try {
                     CustomRule rule = new CustomRule();
                     rule.name = (String) ruleConfig.get("name");
-                    rule.pattern = Pattern.compile((String) ruleConfig.get("pattern"), Pattern.CASE_INSENSITIVE);
+                    rule.pattern = compileForFind((String) ruleConfig.get("pattern"), Pattern.CASE_INSENSITIVE);
                     String severityStr = (String) ruleConfig.getOrDefault("severity", "ERROR");
                     rule.severity = Severity.valueOf(severityStr.toUpperCase());
                     rule.issueType = (String) ruleConfig.getOrDefault("issueType", rule.name);
@@ -602,12 +670,12 @@ public class LogParser {
      */
     private String createFingerprint(LogIssue issue) {
         // Normalize message by removing variable parts
-        String normalizedMessage = issue.getMessage()
-            .replaceAll("\\d{4}[-/]\\d{2}[-/]\\d{2}", "DATE")
-            .replaceAll("\\d{2}:\\d{2}:\\d{2}[.,]?\\d*", "TIME")
-            .replaceAll("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "UUID")
-            .replaceAll("\\b\\d+\\b", "N")
-            .replaceAll("0x[0-9a-fA-F]+", "HEX");
+        String normalizedMessage = issue.getMessage();
+        normalizedMessage = FP_DATE.matcher(normalizedMessage).replaceAll("DATE");
+        normalizedMessage = FP_TIME.matcher(normalizedMessage).replaceAll("TIME");
+        normalizedMessage = FP_UUID.matcher(normalizedMessage).replaceAll("UUID");
+        normalizedMessage = FP_NUMBER.matcher(normalizedMessage).replaceAll("N");
+        normalizedMessage = FP_HEX.matcher(normalizedMessage).replaceAll("HEX");
         
         return String.format("%s|%s|%s|%s",
             issue.getServerName(),
@@ -645,8 +713,7 @@ public class LogParser {
      */
     private String extractExceptionType(String line) {
         // Try to find exception class name
-        Pattern exTypePattern = Pattern.compile("([\\w.$]+(?:Exception|Error|Throwable))");
-        Matcher matcher = exTypePattern.matcher(line);
+        Matcher matcher = EXCEPTION_TYPE_PATTERN.matcher(line);
         if (matcher.find()) {
             String fullType = matcher.group(1);
             // Return just the class name without package
@@ -667,12 +734,13 @@ public class LogParser {
         }
         
         // Check for common patterns
-        if (line.toLowerCase().contains("timeout")) return "Timeout";
-        if (line.toLowerCase().contains("connection")) return "Connection";
-        if (line.toLowerCase().contains("authentication")) return "Authentication";
-        if (line.toLowerCase().contains("permission") || line.toLowerCase().contains("denied")) return "Permission";
-        if (line.toLowerCase().contains("memory")) return "Memory";
-        if (line.toLowerCase().contains("disk") || line.toLowerCase().contains("storage")) return "Storage";
+        String lower = line.toLowerCase();
+        if (lower.contains("timeout")) return "Timeout";
+        if (lower.contains("connection")) return "Connection";
+        if (lower.contains("authentication")) return "Authentication";
+        if (lower.contains("permission") || lower.contains("denied")) return "Permission";
+        if (lower.contains("memory")) return "Memory";
+        if (lower.contains("disk") || lower.contains("storage")) return "Storage";
         
         return defaultType;
     }

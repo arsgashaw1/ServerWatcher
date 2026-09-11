@@ -543,6 +543,7 @@ public class ApiServlet extends HttpServlet {
     private void handleAcknowledgeIssue(String id, PrintWriter out, HttpServletResponse resp) {
         boolean success = issueStore.acknowledgeIssue(id);
         if (success) {
+            analysisService.invalidateCaches();
             out.write(GSON.toJson(success("Issue acknowledged")));
         } else {
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
@@ -552,11 +553,13 @@ public class ApiServlet extends HttpServlet {
     
     private void handleClearIssues(PrintWriter out) {
         issueStore.clearAll();
+        analysisService.invalidateCaches();
         out.write(GSON.toJson(success("All issues cleared")));
     }
     
     private void handleClearAcknowledged(PrintWriter out) {
         issueStore.clearAcknowledged();
+        analysisService.invalidateCaches();
         out.write(GSON.toJson(success("Acknowledged issues cleared")));
     }
     

@@ -244,6 +244,7 @@ public class ConfigApiServlet extends HttpServlet {
      */
     private void handleGetWatchDirectories(PrintWriter out) {
         List<Map<String, Object>> directories = new ArrayList<>();
+        Set<Path> trackedFiles = logWatcher != null ? logWatcher.getTrackedFiles() : Collections.emptySet();
         
         // Add server-based paths
         if (config.getServers() != null) {
@@ -261,15 +262,8 @@ public class ConfigApiServlet extends HttpServlet {
                 dir.put("isDirectory", Files.isDirectory(path));
                 
                 // Count files being watched in this directory
-                int fileCount = 0;
-                if (logWatcher != null) {
-                    for (Path trackedFile : logWatcher.getTrackedFiles()) {
-                        if (trackedFile.startsWith(path)) {
-                            fileCount++;
-                        }
-                    }
-                }
-                dir.put("trackedFileCount", fileCount);
+                dir.put("trackedFileCount", countTrackedFiles(trackedFiles, path));
+                addWatchState(dir);
                 
                 directories.add(dir);
             }
@@ -289,15 +283,8 @@ public class ConfigApiServlet extends HttpServlet {
                 dir.put("exists", Files.exists(path));
                 dir.put("isDirectory", Files.isDirectory(path));
                 
-                int fileCount = 0;
-                if (logWatcher != null) {
-                    for (Path trackedFile : logWatcher.getTrackedFiles()) {
-                        if (trackedFile.startsWith(path)) {
-                            fileCount++;
-                        }
-                    }
-                }
-                dir.put("trackedFileCount", fileCount);
+                dir.put("trackedFileCount", countTrackedFiles(trackedFiles, path));
+                addWatchState(dir);
                 
                 directories.add(dir);
             }
@@ -328,6 +315,9 @@ public class ConfigApiServlet extends HttpServlet {
         }
         
         status.put("pollingInterval", config.getPollingIntervalSeconds());
+        if (logWatcher != null) {
+            status.put("watcherHealth", logWatcher.getHealthSummary());
+        }
         status.put("filePatterns", config.getFilePatterns());
         status.put("configPath", configLoader.getConfigFilePath().toString());
         status.put("requiresAuth", config.hasAdminCredentials());
@@ -912,6 +902,30 @@ public class ConfigApiServlet extends HttpServlet {
     }
     
     // Helper methods
+
+    private static int countTrackedFiles(Set<Path> trackedFiles, Path directory) {
+        int count = 0;
+        for (Path trackedFile : trackedFiles) {
+            if (trackedFile.startsWith(directory)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Adds the watcher's live health state (OK, EMPTY, MISSING, ERROR...) for a directory entry.
+     */
+    private void addWatchState(Map<String, Object> dir) {
+        if (logWatcher == null) {
+            return;
+        }
+        Map<String, Object> status = logWatcher.getPathStatus((String) dir.get("serverName"), (String) dir.get("path"));
+        if (status != null) {
+            dir.put("watchState", status.get("state"));
+            dir.put("watchMessage", status.get("message"));
+        }
+    }
     
     private boolean isPathSafe(Path path) {
         String pathStr = path.toString().toLowerCase();

@@ -28,7 +28,8 @@ public class H2IssueStore implements IssueRepository {
     // Cache for frequently accessed statistics
     private final Map<Severity, AtomicLong> severityCounts;
     private final Map<String, AtomicLong> serverCounts;
-    
+    private volatile boolean countersStale;
+
     private static final int MAX_LISTENERS = 100;
     private static final int MAX_FILTER_RESULTS = 10000;
     
@@ -177,8 +178,9 @@ public class H2IssueStore implements IssueRepository {
                 stmt.setInt(1, toDelete);
                 int deleted = stmt.executeUpdate();
                 if (deleted > 0) {
-                    // Refresh cached counters from database to stay in sync
-                    refreshCachedCounters();
+                    // Refresh lazily: at the cap every insert trims, and two full
+                    // GROUP BY scans per insert would dominate CPU during bursts
+                    countersStale = true;
                 }
             }
         }
@@ -689,6 +691,10 @@ public class H2IssueStore implements IssueRepository {
      */
     @Override
     public long getCountBySeverity(Severity severity) {
+        if (countersStale) {
+            countersStale = false;
+            refreshCachedCounters();
+        }
         AtomicLong count = severityCounts.get(severity);
         return count != null ? count.get() : 0;
     }
@@ -788,6 +794,60 @@ public class H2IssueStore implements IssueRepository {
         return distribution;
     }
     
+    /**
+     * Gets grouped issue counts with a single aggregate query (no row materialization).
+     */
+    @Override
+    public List<IssueGroupCount> getIssueGroupCounts() {
+        List<IssueGroupCount> groups = new ArrayList<>();
+        try {
+            Connection conn = dbManager.getConnection();
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(
+                    "SELECT severity, acknowledged, server_name, issue_type, file_name, COUNT(*) " +
+                    "FROM log_issues GROUP BY severity, acknowledged, server_name, issue_type, file_name")) {
+                while (rs.next()) {
+                    groups.add(new IssueGroupCount(parseSeverity(rs.getString(1)), rs.getBoolean(2),
+                        rs.getString(3), rs.getString(4), rs.getString(5), rs.getLong(6)));
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting issue group counts: " + e.getMessage());
+        }
+        return groups;
+    }
+
+    /**
+     * Gets detection timestamps after the given time using the detected_at index.
+     */
+    @Override
+    public List<LocalDateTime> getDetectionTimesSince(LocalDateTime since) {
+        List<LocalDateTime> times = new ArrayList<>();
+        try {
+            Connection conn = dbManager.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT detected_at FROM log_issues WHERE detected_at > ?")) {
+                stmt.setTimestamp(1, Timestamp.valueOf(since));
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        times.add(rs.getTimestamp(1).toLocalDateTime());
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting detection times: " + e.getMessage());
+        }
+        return times;
+    }
+
+    private static Severity parseSeverity(String value) {
+        try {
+            return Severity.valueOf(value);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return Severity.ERROR;
+        }
+    }
+
     /**
      * Converts a ResultSet row to a LogIssue object.
      */

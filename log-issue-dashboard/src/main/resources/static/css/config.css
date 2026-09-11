@@ -222,6 +222,19 @@
     color: var(--error-color);
 }
 
+.detail-value.status-warning,
+.status-value.status-warning {
+    color: var(--warning-color);
+}
+
+.status-value.status-ok {
+    color: var(--success-color);
+}
+
+.status-value.status-error {
+    color: var(--error-color);
+}
+
 /* Patterns Grid */
 .patterns-grid {
     display: flex;

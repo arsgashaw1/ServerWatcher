@@ -22,7 +22,12 @@ class LogDashboard {
         };
         this.viewers = [];
         this.myViewerId = null; // Unique ID assigned by server to identify self
-        
+        this.pollTimers = [];
+        this.statsRefreshTimer = null;
+        this.pendingIssues = [];
+        this.issueFlushScheduled = false;
+        this.wasDisconnected = false;
+
         this.init();
     }
     
@@ -34,9 +39,40 @@ class LogDashboard {
         this.connectEventStream();
         this.loadInitialData();
         
-        // Refresh data periodically
-        setInterval(() => this.loadStats(), 10000);
-        setInterval(() => this.loadAnomalies(), 30000);
+        // Refresh data periodically, pausing while the tab is hidden
+        this.startPolling();
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                this.stopPolling();
+            } else {
+                this.loadStats();
+                this.loadAnomalies();
+                this.startPolling();
+            }
+        });
+    }
+
+    startPolling() {
+        this.stopPolling();
+        this.pollTimers.push(setInterval(() => this.loadStats(), 10000));
+        this.pollTimers.push(setInterval(() => this.loadAnomalies(), 30000));
+    }
+
+    stopPolling() {
+        this.pollTimers.forEach(timer => clearInterval(timer));
+        this.pollTimers = [];
+    }
+
+    /**
+     * Coalesces stats refreshes during issue bursts: at most one request every
+     * few seconds instead of one request per incoming issue.
+     */
+    scheduleStatsRefresh() {
+        if (this.statsRefreshTimer || document.hidden) return;
+        this.statsRefreshTimer = setTimeout(() => {
+            this.statsRefreshTimer = null;
+            this.loadStats();
+        }, 3000);
     }
     
     // Theme handling
@@ -92,6 +128,12 @@ class LogDashboard {
             if (e.target.id === 'exportModal') this.closeExportModal();
         });
         
+        // Issue list: one delegated click handler instead of one listener per item
+        document.getElementById('issuesList').addEventListener('click', (e) => {
+            const item = e.target.closest('.issue-item');
+            if (item) this.showIssueDetail(item.dataset.id);
+        });
+
         // Issue modal
         document.getElementById('modalClose').addEventListener('click', () => this.closeModal());
         document.getElementById('acknowledgeBtn').addEventListener('click', () => this.acknowledgeIssue());
@@ -142,12 +184,16 @@ class LogDashboard {
             if (data.viewerId) {
                 this.myViewerId = data.viewerId;
             }
+            // Issues detected while disconnected were not streamed; reload them
+            if (this.wasDisconnected) {
+                this.wasDisconnected = false;
+                this.loadIssues();
+                this.loadStats();
+            }
         });
-        
+
         this.eventSource.addEventListener('issue', (e) => {
-            const issue = JSON.parse(e.data);
-            this.addIssue(issue, true);
-            this.updateStats();
+            this.queueIssue(JSON.parse(e.data));
         });
         
         this.eventSource.addEventListener('stats', (e) => {
@@ -162,6 +208,7 @@ class LogDashboard {
         
         this.eventSource.onerror = () => {
             console.log('SSE error, reconnecting...');
+            this.wasDisconnected = true;
             this.updateConnectionStatus('disconnected');
             
             // Reconnect after 5 seconds
@@ -362,31 +409,61 @@ class LogDashboard {
     }
     
     // Issue handling
+
+    /**
+     * Buffers streamed issues and applies them once per animation frame, so a burst
+     * of hundreds of issues causes one DOM update instead of hundreds.
+     */
+    queueIssue(issue) {
+        this.pendingIssues.push(issue);
+        if (!this.issueFlushScheduled) {
+            this.issueFlushScheduled = true;
+            const flush = () => this.flushPendingIssues();
+            // requestAnimationFrame does not run in background tabs
+            if (document.hidden) {
+                setTimeout(flush, 1000);
+            } else {
+                requestAnimationFrame(flush);
+            }
+        }
+        this.scheduleStatsRefresh();
+    }
+
+    flushPendingIssues() {
+        this.issueFlushScheduled = false;
+        const batch = this.pendingIssues;
+        this.pendingIssues = [];
+        batch.forEach(issue => this.addIssue(issue, true));
+    }
+
     addIssue(issue, isNew = false) {
         // Always update total count (global count regardless of filters)
         this.pagination.total++;
-        
+
         // Check if issue matches current filters
         const matchesFilters = this.issueMatchesFilters(issue);
-        
+        // Live issues only belong in the view when showing the newest page
+        const onFirstPage = this.pagination.offset === 0;
+
         if (matchesFilters) {
-            // Add to beginning of current view only if it matches filters
-            this.issues.unshift(issue);
-            
-            // Limit issues in view
-            if (this.issues.length > this.pagination.limit) {
-                this.issues = this.issues.slice(0, this.pagination.limit);
+            if (onFirstPage) {
+                this.issues.unshift(issue);
+
+                // Limit issues in view
+                if (this.issues.length > this.pagination.limit) {
+                    this.issues.length = this.pagination.limit;
+                }
             }
-            
+
             // Update filtered count
             this.pagination.totalFiltered++;
         }
-        
+
         // Update display
         this.updateIssueCount();
-        
+
         // Re-render or add single item
-        if (isNew && matchesFilters) {
+        if (isNew && matchesFilters && onFirstPage) {
             this.prependIssueElement(issue);
         } else if (!isNew) {
             this.renderIssues();
@@ -439,7 +516,13 @@ class LogDashboard {
         const el = this.createIssueElement(issue);
         el.classList.add('new');
         list.insertBefore(el, list.firstChild);
-        
+
+        // Keep the DOM in sync with the page size; otherwise a long-running
+        // session accumulates thousands of nodes and the page becomes sluggish
+        while (list.children.length > this.pagination.limit) {
+            list.removeChild(list.lastElementChild);
+        }
+
         // Remove animation class after animation completes
         setTimeout(() => el.classList.remove('new'), 300);
     }
@@ -463,12 +546,10 @@ class LogDashboard {
             return;
         }
         
-        list.innerHTML = filtered.map(issue => this.createIssueElement(issue).outerHTML).join('');
-        
-        // Re-attach click handlers
-        list.querySelectorAll('.issue-item').forEach(el => {
-            el.addEventListener('click', () => this.showIssueDetail(el.dataset.id));
-        });
+        const fragment = document.createDocumentFragment();
+        filtered.forEach(issue => fragment.appendChild(this.createIssueElement(issue)));
+        list.textContent = '';
+        list.appendChild(fragment);
     }
     
     createIssueElement(issue) {
@@ -488,9 +569,7 @@ class LogDashboard {
                 <span>🕐 ${issue.detectedAt}</span>
             </div>
         `;
-        
-        el.addEventListener('click', () => this.showIssueDetail(issue.id));
-        
+
         return el;
     }
     

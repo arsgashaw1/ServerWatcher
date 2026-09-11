@@ -5,7 +5,6 @@ import com.logdashboard.model.DumpProcessConfig;
 import com.logdashboard.store.DumpProcessingStore;
 
 import java.io.File;
-import java.io.FilenameFilter;
 import java.sql.SQLException;
 import java.util.HashSet;
 import java.util.List;
@@ -44,7 +43,10 @@ public class DumpProcessingWatcher {
     // Track configs currently being processed to avoid duplicate processing
     // Since the script processes the entire dump folder, we track by config ID
     private final Set<Integer> processingConfigs;
-    
+
+    // Configs whose dump folder is currently inaccessible (used to warn only on state change)
+    private final Set<Integer> inaccessibleConfigs = ConcurrentHashMap.newKeySet();
+
     /**
      * Creates a new DumpProcessingWatcher with default settings.
      */
@@ -95,8 +97,8 @@ public class DumpProcessingWatcher {
         // Recover files stuck in PROCESSING status from previous server run
         recoverStuckFiles();
         
-        // Schedule periodic polling
-        scheduler.scheduleAtFixedRate(
+        // Schedule periodic polling (fixed delay: a slow poll never causes back-to-back runs)
+        scheduler.scheduleWithFixedDelay(
             this::pollDumpFolders,
             5, // Initial delay of 5 seconds
             pollingIntervalSeconds,
@@ -166,21 +168,6 @@ public class DumpProcessingWatcher {
             
             for (DumpProcessConfig config : configs) {
                 try {
-                    // Log that we're checking this config's dump folder
-                    File dumpFolder = new File(config.getDumpFolder());
-                    if (dumpFolder.exists() && dumpFolder.isDirectory()) {
-                        File[] mdbFiles = dumpFolder.listFiles((dir, name) -> 
-                            name.toLowerCase().endsWith(MDB_EXTENSION));
-                        int fileCount = mdbFiles != null ? mdbFiles.length : 0;
-                        if (fileCount > 0) {
-                            updateStatus("Polling " + config.getServerName() + " (ID:" + config.getId() + 
-                                "): found " + fileCount + " .mdb file(s) in " + config.getDumpFolder());
-                        }
-                    } else {
-                        updateStatus("WARNING: Dump folder not accessible: " + config.getDumpFolder() + 
-                            " for config " + config.getServerName() + " (ID:" + config.getId() + ")");
-                    }
-                    
                     scanDumpFolder(config);
                     processReadyFiles(config);
                 } catch (Exception e) {
@@ -200,34 +187,36 @@ public class DumpProcessingWatcher {
      */
     private void scanDumpFolder(DumpProcessConfig config) {
         File dumpFolder = new File(config.getDumpFolder());
-        
-        if (!dumpFolder.exists() || !dumpFolder.isDirectory()) {
-            updateStatus("WARNING: Dump folder does not exist: " + config.getDumpFolder());
-            return;
-        }
-        
-        // Find all .mdb files
-        File[] mdbFiles = dumpFolder.listFiles(new FilenameFilter() {
-            @Override
-            public boolean accept(File dir, String name) {
-                return name.toLowerCase().endsWith(MDB_EXTENSION);
+
+        // Find all .mdb files (listFiles returns null if the folder is missing or unreadable)
+        File[] mdbFiles = dumpFolder.listFiles((dir, name) -> name.toLowerCase().endsWith(MDB_EXTENSION));
+
+        if (mdbFiles == null) {
+            // Warn once when the folder becomes inaccessible, not on every poll
+            if (inaccessibleConfigs.add(config.getId())) {
+                updateStatus("WARNING: Dump folder not accessible: " + config.getDumpFolder() +
+                    " for config " + config.getServerName() + " (ID:" + config.getId() + ")");
             }
-        });
-        
-        if (mdbFiles == null || mdbFiles.length == 0) {
             return;
         }
-        
+        if (inaccessibleConfigs.remove(config.getId())) {
+            updateStatus("Dump folder accessible again: " + config.getDumpFolder() +
+                " [" + config.getServerName() + "]");
+        }
+
+        if (mdbFiles.length == 0) {
+            return;
+        }
+
+        // One query for all tracked paths instead of one query per file
+        Set<String> trackedPaths = store.getTrackedFilePaths(config.getId());
         int newFiles = 0;
-        int existingFiles = 0;
-        
+
         for (File mdbFile : mdbFiles) {
             String filePath = mdbFile.getAbsolutePath();
-            
+
             try {
-                // Check if we're already tracking this file
-                var existing = store.findFileByPath(config.getId(), filePath);
-                if (existing.isEmpty()) {
+                if (!trackedPaths.contains(filePath)) {
                     // New file - add to tracking
                     DumpFileTracking tracking = new DumpFileTracking(
                         config.getId(),
@@ -240,21 +229,19 @@ public class DumpProcessingWatcher {
                     
                     store.addFileTracking(tracking);
                     newFiles++;
-                    updateStatus("New .mdb file detected: " + mdbFile.getName() + 
+                    updateStatus("New .mdb file detected: " + mdbFile.getName() +
                         " [" + config.getServerName() + "]");
-                } else {
-                    existingFiles++;
                 }
             } catch (SQLException e) {
                 System.err.println("Error adding file tracking for " + filePath + ": " + e.getMessage());
                 e.printStackTrace();
             }
         }
-        
-        // Log summary
-        if (newFiles > 0 || existingFiles > 0) {
-            updateStatus("Scan complete for " + config.getServerName() + 
-                ": " + newFiles + " new, " + existingFiles + " already tracked");
+
+        // Log summary only when something changed
+        if (newFiles > 0) {
+            updateStatus("Scan complete for " + config.getServerName() +
+                ": " + newFiles + " new, " + (mdbFiles.length - newFiles) + " already tracked");
         }
     }
     
@@ -522,9 +509,10 @@ public class DumpProcessingWatcher {
     }
     
     private void updateStatus(String status) {
-        System.out.println("[DumpProcessing] " + status);
         if (statusCallback != null) {
             statusCallback.accept("[DumpProcessing] " + status);
+        } else {
+            System.out.println("[DumpProcessing] " + status);
         }
     }
 }

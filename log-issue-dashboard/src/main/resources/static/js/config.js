@@ -23,6 +23,14 @@ class ConfigManager {
         this.setupEventListeners();
         this.setupTabs();
         this.loadInitialData();
+
+        // Keep watcher health current while the page is visible
+        setInterval(() => {
+            if (!document.hidden) {
+                this.loadStatus();
+                this.loadDirectories();
+            }
+        }, 30000);
     }
     
     // Theme handling
@@ -148,6 +156,7 @@ class ConfigManager {
             document.getElementById('pollingInterval').textContent = 
                 (data.pollingInterval || 2) + 's';
             document.getElementById('configPath').textContent = data.configPath || '-';
+            this.renderWatcherHealth(data.watcherHealth);
             
             this.requiresAuth = data.requiresAuth || false;
             this.updateAuthStatus();
@@ -156,6 +165,35 @@ class ConfigManager {
         }
     }
     
+    renderWatcherHealth(health) {
+        const el = document.getElementById('watcherHealth');
+        if (!el) return;
+        if (!health) {
+            el.textContent = '-';
+            return;
+        }
+
+        const problems = health.problemPathCount || 0;
+        let text = '✓ Healthy';
+        let cssClass = 'status-ok';
+        if (!health.running) {
+            text = '✗ Stopped';
+            cssClass = 'status-error';
+        } else if (health.lastPollError) {
+            text = '✗ Poll error';
+            cssClass = 'status-error';
+        } else if (problems > 0) {
+            text = `⚠ ${problems} path issue${problems === 1 ? '' : 's'}`;
+            cssClass = 'status-warning';
+        }
+
+        el.textContent = text;
+        el.className = `status-value ${cssClass}`;
+        const lastPoll = health.lastPollAt ? new Date(health.lastPollAt).toLocaleTimeString() : 'never';
+        el.title = `Last poll: ${lastPoll} (${health.lastPollDurationMs || 0} ms)` +
+            (health.lastPollError ? `\nError: ${health.lastPollError}` : '');
+    }
+
     async loadDirectories() {
         try {
             const response = await fetch('/config/watch-directories');
@@ -217,10 +255,12 @@ class ConfigManager {
             return;
         }
         
-        list.innerHTML = this.directories.map(dir => `
-            <div class="directory-card ${dir.exists ? '' : 'warning'}">
+        list.innerHTML = this.directories.map(dir => {
+            const state = this.describeWatchState(dir);
+            return `
+            <div class="directory-card ${state.ok ? '' : 'warning'}">
                 <div class="directory-header">
-                    <div class="directory-icon">${dir.exists ? '📁' : '⚠️'}</div>
+                    <div class="directory-icon">${state.ok ? '📁' : '⚠️'}</div>
                     <div class="directory-info">
                         <div class="directory-name">${this.escapeHtml(dir.serverName || 'Unnamed')}</div>
                         <div class="directory-path">${this.escapeHtml(dir.path)}</div>
@@ -236,8 +276,8 @@ class ConfigManager {
                 <div class="directory-details">
                     <div class="detail-item">
                         <span class="detail-label">Status:</span>
-                        <span class="detail-value ${dir.exists ? 'status-ok' : 'status-error'}">
-                            ${dir.exists ? '✓ Active' : '✗ Path not found'}
+                        <span class="detail-value ${state.cssClass}">
+                            ${state.label}
                         </span>
                     </div>
                     <div class="detail-item">
@@ -254,11 +294,41 @@ class ConfigManager {
                             <span class="detail-value">${this.escapeHtml(dir.description)}</span>
                         </div>
                     ` : ''}
+                    ${!state.ok && dir.watchMessage ? `
+                        <div class="detail-item full-width">
+                            <span class="detail-label">Details:</span>
+                            <span class="detail-value">${this.escapeHtml(dir.watchMessage)}</span>
+                        </div>
+                    ` : ''}
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
     }
     
+    /**
+     * Maps the watcher's live path state to a display label.
+     * Falls back to a simple existence check if the watcher has not polled the path yet.
+     */
+    describeWatchState(dir) {
+        switch (dir.watchState) {
+            case 'OK':
+                return { ok: true, cssClass: 'status-ok', label: '✓ Active' };
+            case 'EMPTY':
+                return { ok: false, cssClass: 'status-warning', label: '⚠ No matching files' };
+            case 'NOT_MATCHING':
+                return { ok: false, cssClass: 'status-warning', label: '⚠ File does not match patterns' };
+            case 'MISSING':
+                return { ok: false, cssClass: 'status-error', label: '✗ Path not found' };
+            case 'ERROR':
+                return { ok: false, cssClass: 'status-error', label: '✗ Cannot read path' };
+            default:
+                return dir.exists
+                    ? { ok: true, cssClass: 'status-ok', label: '✓ Active' }
+                    : { ok: false, cssClass: 'status-error', label: '✗ Path not found' };
+        }
+    }
+
     renderPatterns() {
         const list = document.getElementById('patternsList');
         

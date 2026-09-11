@@ -83,8 +83,8 @@ public class ConfigFileWatcher {
         
         updateStatus("Configuration file watcher started");
         
-        // Check every 2 seconds for config file changes
-        scheduler.scheduleAtFixedRate(
+        // Check every 2 seconds for config file changes (fixed delay: never runs back-to-back)
+        scheduler.scheduleWithFixedDelay(
             this::checkConfigFile,
             2,
             2,
@@ -128,8 +128,10 @@ public class ConfigFileWatcher {
                 updateStatus("Configuration file changed, reloading...");
                 reloadConfig();
             }
-        } catch (IOException e) {
-            System.err.println("Error checking config file: " + e.getMessage());
+        } catch (Exception e) {
+            // Catch everything (e.g. malformed JSON while the file is being edited):
+            // an exception escaping a scheduled task would stop config watching for good
+            updateStatus("Error checking config file: " + e.getMessage());
         }
     }
     
@@ -180,9 +182,10 @@ public class ConfigFileWatcher {
     }
     
     private void updateStatus(String status) {
-        System.out.println("[ConfigWatcher] " + status);
         if (statusCallback != null) {
             statusCallback.accept(status);
+        } else {
+            System.out.println("[ConfigWatcher] " + status);
         }
     }
     

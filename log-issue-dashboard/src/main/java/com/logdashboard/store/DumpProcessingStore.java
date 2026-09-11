@@ -6,8 +6,10 @@ import com.logdashboard.model.DumpProcessConfig;
 import java.sql.*;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Store for managing database dump processing configurations and file tracking.
@@ -302,6 +304,28 @@ public class DumpProcessingStore {
         return files;
     }
     
+    /**
+     * Gets the paths of all tracked files for a config in a single query.
+     * Used by the watcher so each poll costs one query instead of one per file.
+     */
+    public Set<String> getTrackedFilePaths(int configId) {
+        Set<String> paths = new HashSet<>();
+        String sql = "SELECT file_path FROM dump_file_tracking WHERE config_id = ?";
+
+        try (PreparedStatement stmt = databaseManager.getConnection().prepareStatement(sql)) {
+            stmt.setInt(1, configId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    paths.add(rs.getString(1));
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting tracked file paths: " + e.getMessage());
+        }
+
+        return paths;
+    }
+
     /**
      * Finds a file tracking record by config ID and file path.
      */

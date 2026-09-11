@@ -4,6 +4,9 @@ import com.logdashboard.model.LogIssue;
 import com.logdashboard.model.LogIssue.Severity;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -154,4 +157,59 @@ public interface IssueRepository {
      * Gets unique exception types from current issues.
      */
     Map<String, Integer> getExceptionTypeDistribution();
+
+    /**
+     * Issue count for one combination of severity, acknowledged flag, server, type and file.
+     */
+    final class IssueGroupCount {
+        public final Severity severity;
+        public final boolean acknowledged;
+        public final String serverName;
+        public final String issueType;
+        public final String fileName;
+        public final long count;
+
+        public IssueGroupCount(Severity severity, boolean acknowledged, String serverName,
+                               String issueType, String fileName, long count) {
+            this.severity = severity;
+            this.acknowledged = acknowledged;
+            this.serverName = serverName;
+            this.issueType = issueType;
+            this.fileName = fileName;
+            this.count = count;
+        }
+    }
+
+    /**
+     * Gets issue counts grouped by severity, acknowledged flag, server, type and file.
+     * Lets statistics be computed without loading every issue (with stack traces) into memory.
+     */
+    default List<IssueGroupCount> getIssueGroupCounts() {
+        Map<List<Object>, long[]> groups = new LinkedHashMap<>();
+        for (LogIssue issue : getAllIssues()) {
+            List<Object> key = Arrays.asList(issue.getSeverity(), issue.isAcknowledged(),
+                issue.getServerName(), issue.getIssueType(), issue.getFileName());
+            groups.computeIfAbsent(key, k -> new long[1])[0]++;
+        }
+        List<IssueGroupCount> result = new ArrayList<>();
+        for (Map.Entry<List<Object>, long[]> entry : groups.entrySet()) {
+            List<Object> key = entry.getKey();
+            result.add(new IssueGroupCount((Severity) key.get(0), (Boolean) key.get(1),
+                (String) key.get(2), (String) key.get(3), (String) key.get(4), entry.getValue()[0]));
+        }
+        return result;
+    }
+
+    /**
+     * Gets detection timestamps of issues detected after the given time.
+     */
+    default List<LocalDateTime> getDetectionTimesSince(LocalDateTime since) {
+        List<LocalDateTime> times = new ArrayList<>();
+        for (LogIssue issue : getAllIssues()) {
+            if (issue.getDetectedAt().isAfter(since)) {
+                times.add(issue.getDetectedAt());
+            }
+        }
+        return times;
+    }
 }

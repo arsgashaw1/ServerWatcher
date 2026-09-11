@@ -4,7 +4,6 @@ import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.config.ServerPath;
 import com.logdashboard.model.LogIssue;
 import com.logdashboard.parser.LogParser;
-import com.logdashboard.util.EncodingDetector;
 import com.logdashboard.util.IconvConverter;
 
 import java.io.*;
@@ -13,6 +12,7 @@ import java.nio.channels.FileChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
@@ -20,61 +20,161 @@ import java.util.regex.Pattern;
 
 /**
  * Watches specified directories for log file changes and detects issues.
- * Memory optimization: limits the number of tracked files and buffer sizes.
+ *
+ * Performance notes:
+ * - Each poll lists every watched directory once, filters by file name before touching
+ *   the file system, and reads file attributes with a single call per file.
+ * - Polls use a fixed delay, so a slow cycle (e.g. a sluggish network mount) never causes
+ *   back-to-back polling that pins a CPU core.
+ * - All tracking state is mutated only on the watcher thread; web threads read snapshots.
+ * - Warnings about missing/unreadable paths are logged when the state changes, not every poll.
  */
 public class LogFileWatcher {
-    
+
     private final DashboardConfig config;
     private final LogParser parser;
     private final Consumer<LogIssue> issueCallback;
     private final Consumer<String> statusCallback;
-    
-    private final Map<Path, Long> filePositions;
-    private final Map<Path, Integer> fileLineNumbers;
-    private final Map<Path, String> fileServerNames;  // Maps file path to server name
-    private final Map<Path, Charset> fileCharsets;    // Maps file path to charset (for EBCDIC support)
-    private final Map<Path, String> fileIconvEncodings;  // Maps file path to iconv encoding name
-    private final Map<Path, Boolean> fileUseIconv;    // Whether to use iconv for conversion
     private final ScheduledExecutorService scheduler;
     private final List<Pattern> filePatterns;
-    
+
+    private final Map<Path, TrackedFile> trackedFiles = new ConcurrentHashMap<>();
+    private final Map<String, PathStatus> pathStatuses = new ConcurrentHashMap<>();
+
     // Track dynamically added server paths for polling
-    private final List<ServerPath> dynamicServerPaths;
-    
-    // Memory limits
-    private static final int MAX_TRACKED_FILES = 1000;
-    private static final int MAX_READ_BUFFER_SIZE = 64 * 1024;  // 64KB max per read
-    private static final int MAX_LINES_PER_READ = 10000;  // Limit lines processed per read
-    
+    private final List<ServerPath> dynamicServerPaths = new CopyOnWriteArrayList<>();
+
+    // Limits
+    private static final int MAX_TRACKED_FILES = 10000;
+    private static final int MAX_READ_BYTES_PER_POLL = 4 * 1024 * 1024;  // Per file, per poll
+    private static final int MAX_LINES_PER_READ = 10000;
+    private static final int MAX_LINE_LENGTH = 10000;
+    private static final long LINE_COUNT_MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+    // A file that appears after startup is read from the beginning only if it was modified
+    // after the previous poll started (minus this slack for file server clock skew).
+    // Older files - e.g. rotated archives moved into the directory - start at the end.
+    private static final long NEW_FILE_MTIME_SLACK_MS = 5000;
+    private static final long SLOW_POLL_WARNING_INTERVAL_MS = 10 * 60 * 1000;
+
+    private static final byte CR = 0x0D;
+    private static final Pattern ICONV_LINE_SPLIT = Pattern.compile("\r\n|[\n\r]");
+
     private volatile boolean running;
-    
+    private volatile boolean verboseLogging = false;
+
+    // Poll statistics (written by the watcher thread, read by diagnostics)
+    private volatile long lastPollAt;
+    private volatile long lastPollDurationMs;
+    private volatile long pollCount;
+    private volatile String lastPollError;
+
+    // Watcher thread only
+    private long previousPollStartedAt;
+    private long lastSlowPollWarningAt;
+    private boolean trackedFileLimitWarned;
+
+    /** State of a single watched path (directory or file). */
+    public enum PathState { OK, EMPTY, MISSING, NOT_MATCHING, ERROR }
+
+    private static final class PathStatus {
+        final String serverName;
+        final String path;
+        final PathState state;
+        final String message;
+        final int matchingFiles;
+        final long checkedAt;
+
+        PathStatus(String serverName, String path, PathState state, String message, int matchingFiles) {
+            this.serverName = serverName;
+            this.path = path;
+            this.state = state;
+            this.message = message;
+            this.matchingFiles = matchingFiles;
+            this.checkedAt = System.currentTimeMillis();
+        }
+    }
+
+    /** Encoding used to decode a tracked file. */
+    private static final class EncodingInfo {
+        final Charset charset;       // null => convert with external iconv
+        final boolean ebcdic;
+        final String iconvEncoding;  // set for EBCDIC encodings
+        final String label;
+
+        EncodingInfo(Charset charset, boolean ebcdic, String iconvEncoding, String label) {
+            this.charset = charset;
+            this.ebcdic = ebcdic;
+            this.iconvEncoding = iconvEncoding;
+            this.label = label;
+        }
+    }
+
+    /** Tracking state for one log file. */
+    private static final class TrackedFile {
+        final Path path;
+        final String sourceKey;
+        final String serverName;
+        final EncodingInfo encoding;
+        volatile long position;
+        volatile int lineNumber;
+        volatile long lastSeenSize = -1;
+        volatile Object fileKey;
+        volatile String lastError;
+
+        TrackedFile(Path path, String sourceKey, String serverName, EncodingInfo encoding) {
+            this.path = path;
+            this.sourceKey = sourceKey;
+            this.serverName = serverName;
+            this.encoding = encoding;
+        }
+
+        TrackedFile snapshot() {
+            TrackedFile copy = new TrackedFile(path, sourceKey, serverName, encoding);
+            copy.position = position;
+            copy.lineNumber = lineNumber;
+            copy.lastSeenSize = lastSeenSize;
+            copy.fileKey = fileKey;
+            return copy;
+        }
+    }
+
+    /** A matching file found while listing a watched path. */
+    private static final class Candidate {
+        final Path path;
+        final BasicFileAttributes attrs;
+        final ServerPath source;
+        final String sourceKey;
+
+        Candidate(Path path, BasicFileAttributes attrs, ServerPath source, String sourceKey) {
+            this.path = path;
+            this.attrs = attrs;
+            this.source = source;
+            this.sourceKey = sourceKey;
+        }
+    }
+
     /**
      * Result of reading new lines from a file.
-     * Contains both the lines read and the actual byte position reached.
      */
     private static class ReadResult {
         final List<String> lines;
-        final long bytesRead;
-        
-        ReadResult(List<String> lines, long bytesRead) {
+        final long bytesConsumed;
+        final int lineCount;
+
+        ReadResult(List<String> lines, long bytesConsumed, int lineCount) {
             this.lines = lines;
-            this.bytesRead = bytesRead;
+            this.bytesConsumed = bytesConsumed;
+            this.lineCount = lineCount;
         }
     }
-    
-    public LogFileWatcher(DashboardConfig config, Consumer<LogIssue> issueCallback, 
+
+    public LogFileWatcher(DashboardConfig config, Consumer<LogIssue> issueCallback,
                           Consumer<String> statusCallback) {
         this.config = config;
         this.parser = new LogParser(config);
         this.issueCallback = issueCallback;
         this.statusCallback = statusCallback;
-        this.filePositions = new ConcurrentHashMap<>();
-        this.fileLineNumbers = new ConcurrentHashMap<>();
-        this.fileServerNames = new ConcurrentHashMap<>();
-        this.fileCharsets = new ConcurrentHashMap<>();
-        this.fileIconvEncodings = new ConcurrentHashMap<>();
-        this.fileUseIconv = new ConcurrentHashMap<>();
-        this.dynamicServerPaths = Collections.synchronizedList(new ArrayList<>());
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "LogFileWatcher");
             t.setDaemon(true);
@@ -83,9 +183,12 @@ public class LogFileWatcher {
         this.filePatterns = compileFilePatterns(config.getFilePatterns());
         this.running = false;
     }
-    
+
     private List<Pattern> compileFilePatterns(List<String> patterns) {
         List<Pattern> compiled = new ArrayList<>();
+        if (patterns == null) {
+            return compiled;
+        }
         for (String pattern : patterns) {
             // Convert glob pattern to regex
             String regex = pattern
@@ -96,7 +199,7 @@ public class LogFileWatcher {
         }
         return compiled;
     }
-    
+
     /**
      * Starts watching the configured directories for log file changes.
      */
@@ -105,36 +208,23 @@ public class LogFileWatcher {
             return;
         }
         running = true;
-        
-        // Initial scan of existing files
+
         updateStatus("Starting log file watcher...");
-        initialScan();
-        
-        // Schedule periodic polling
-        scheduler.scheduleAtFixedRate(
-            this::pollFiles,
-            config.getPollingIntervalSeconds(),
-            config.getPollingIntervalSeconds(),
-            TimeUnit.SECONDS
-        );
-        
-        int totalPaths = getTotalWatchPaths();
-        updateStatus("Watching " + totalPaths + " path(s)");
-    }
-    
-    private int getTotalWatchPaths() {
-        int count = 0;
-        if (config.getWatchPaths() != null) {
-            count += config.getWatchPaths().size();
+        if (IconvConverter.isIconvAvailable()) {
+            updateStatus("iconv command is available for encoding conversion");
+        } else {
+            updateStatus("iconv command not available, using Java charset handling");
         }
-        if (config.getServers() != null) {
-            count += config.getServers().size();
-        }
-        // Include dynamically added server paths
-        count += dynamicServerPaths.size();
-        return count;
+
+        // Initial scan: existing files are tracked from their current end
+        runOnWatcherThread("initial scan", () -> scanSources(getActiveSources(), true, true), 0);
+
+        int interval = Math.max(1, config.getPollingIntervalSeconds());
+        scheduler.scheduleWithFixedDelay(this::pollFiles, interval, interval, TimeUnit.SECONDS);
+
+        updateStatus("Watching " + getActiveSources().size() + " path(s), " + trackedFiles.size() + " file(s)");
     }
-    
+
     /**
      * Stops the file watcher.
      */
@@ -148,568 +238,484 @@ public class LogFileWatcher {
         }
         updateStatus("Watcher stopped");
     }
-    
+
     /**
-     * Performs initial scan of all watched directories.
-     */
-    private void initialScan() {
-        // Check iconv availability at startup
-        if (IconvConverter.isIconvAvailable()) {
-            updateStatus("iconv command is available for encoding conversion");
-        } else {
-            updateStatus("iconv command not available, using Java charset handling");
-        }
-        
-        // Scan legacy watch paths (no server name)
-        if (config.getWatchPaths() != null) {
-            for (String pathStr : config.getWatchPaths()) {
-                scanPath(pathStr, null, StandardCharsets.UTF_8, null, false);
-            }
-        }
-        
-        // Scan server-based paths
-        if (config.getServers() != null) {
-            for (ServerPath server : config.getServers()) {
-                String serverName = server.getServerName();
-                String pathStr = server.getPath();
-                String encodingInfo = server.getEncoding() != null ? 
-                    " [" + server.getEncoding() + (server.isUseIconv() ? "/iconv" : "") + "]" : "";
-                updateStatus("Scanning server: " + serverName + " -> " + pathStr + encodingInfo);
-                scanPath(server);
-            }
-        }
-    }
-    
-    /**
-     * Scans a server path for log files.
-     * Supports per-file encoding configuration via ServerPath.fileEncodings.
-     */
-    private void scanPath(ServerPath server) {
-        String pathStr = server.getPath();
-        String serverName = server.getServerName();
-        Path watchPath = Paths.get(pathStr);
-        
-        if (!Files.exists(watchPath)) {
-            String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-            updateStatus("Warning: Watch path does not exist: " + pathStr + serverInfo);
-            return;
-        }
-        
-        try {
-            if (Files.isDirectory(watchPath)) {
-                // Scan directory for matching files
-                try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
-                    for (Path file : stream) {
-                        if (Files.isRegularFile(file) && matchesFilePattern(file)) {
-                            // Get per-file encoding (or use server default)
-                            String fileName = file.getFileName().toString();
-                            String fileEncoding = server.getEncodingForFile(fileName);
-                            initializeFileWithEncoding(file, serverName, fileEncoding, server.isUseIconv());
-                        }
-                    }
-                }
-            } else if (Files.isRegularFile(watchPath)) {
-                String fileName = watchPath.getFileName().toString();
-                String fileEncoding = server.getEncodingForFile(fileName);
-                initializeFileWithEncoding(watchPath, serverName, fileEncoding, server.isUseIconv());
-            }
-        } catch (IOException e) {
-            updateStatus("Error scanning path: " + pathStr + " - " + e.getMessage());
-        }
-    }
-    
-    // Legacy method for backward compatibility
-    private void scanPath(String pathStr, String serverName, Charset charset, 
-                          String iconvEncoding, boolean useIconv) {
-        ServerPath server = new ServerPath(serverName, pathStr, null, 
-            iconvEncoding != null ? iconvEncoding : charset.displayName(), useIconv);
-        scanPath(server);
-    }
-    
-    /**
-     * Initializes tracking for a file with a specific encoding.
-     * Uses the correct conversion method based on encoding type:
-     * - EBCDIC (IBM-1047, etc.): iconv -f IBM-1047 -t ISO8859-1
-     * - UTF-8 or ISO8859-1: Direct read
-     */
-    private void initializeFileWithEncoding(Path file, String serverName, String encoding, boolean useIconv) {
-        // Determine the iconv encoding and charset based on the encoding string
-        String iconvEncoding = IconvConverter.normalizeToIconvEncoding(encoding);
-        Charset charset;
-        
-        // For EBCDIC, we'll convert to ISO8859-1, so set charset accordingly
-        if (IconvConverter.isEbcdicEncoding(encoding)) {
-            charset = StandardCharsets.ISO_8859_1;  // Result will be ISO8859-1 after conversion
-            useIconv = true;  // Force iconv for EBCDIC
-        } else if ("ISO8859-1".equals(iconvEncoding) || "ISO-8859-1".equalsIgnoreCase(encoding)) {
-            charset = StandardCharsets.ISO_8859_1;
-            useIconv = false;  // Direct read for ISO8859-1
-        } else {
-            charset = StandardCharsets.UTF_8;
-            useIconv = false;  // Direct read for UTF-8
-        }
-        
-        initializeFile(file, serverName, charset, iconvEncoding, useIconv);
-    }
-    
-    /**
-     * Initializes tracking for a file (sets position to end of file).
-     * If charset is UTF-8 (the default), attempts to auto-detect encoding.
-     * Enforces maximum tracked files limit to prevent memory exhaustion.
-     */
-    private void initializeFile(Path file, String serverName, Charset charset, 
-                                String iconvEncoding, boolean useIconv) {
-        // Check if we've reached the maximum number of tracked files
-        if (filePositions.size() >= MAX_TRACKED_FILES) {
-            updateStatus("Warning: Maximum tracked files limit (" + MAX_TRACKED_FILES + ") reached. Skipping: " + file.getFileName());
-            return;
-        }
-        
-        try {
-            // Auto-detect encoding if not explicitly configured (UTF-8 is the default)
-            Charset effectiveCharset = charset;
-            String effectiveIconvEncoding = iconvEncoding;
-            boolean effectiveUseIconv = useIconv;
-            boolean autoDetected = false;
-            
-            if (StandardCharsets.UTF_8.equals(charset) && iconvEncoding == null) {
-                // Try to auto-detect encoding
-                EncodingDetector.EncodingResult detection = EncodingDetector.detectEncodingWithDetails(file);
-                if (detection.isEbcdic() && detection.confidence > 0.5) {
-                    effectiveCharset = detection.charset;
-                    effectiveIconvEncoding = IconvConverter.javaCharsetToIconvEncoding(effectiveCharset);
-                    autoDetected = true;
-                    updateStatus(String.format("Auto-detected EBCDIC encoding for %s (confidence: %.0f%%)",
-                        file.getFileName(), detection.confidence * 100));
-                }
-            }
-            
-            long size = Files.size(file);
-            // Skip counting lines for very large files to reduce CPU usage at startup
-            int lineCount = 0;
-            if (size < 10 * 1024 * 1024) {  // Only count lines for files < 10MB
-                lineCount = countLines(file, effectiveCharset, effectiveIconvEncoding, effectiveUseIconv);
-            }
-            filePositions.put(file, size);
-            fileLineNumbers.put(file, lineCount);
-            if (serverName != null) {
-                fileServerNames.put(file, serverName);
-            }
-            fileCharsets.put(file, effectiveCharset);
-            if (effectiveIconvEncoding != null) {
-                fileIconvEncodings.put(file, effectiveIconvEncoding);
-            }
-            fileUseIconv.put(file, effectiveUseIconv);
-            
-            String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-            String charsetInfo = "";
-            if (!StandardCharsets.UTF_8.equals(effectiveCharset)) {
-                String encodingName = effectiveUseIconv && effectiveIconvEncoding != null ? 
-                    effectiveIconvEncoding + "/iconv" : effectiveCharset.displayName();
-                charsetInfo = autoDetected ? 
-                    " (auto-detected: " + encodingName + ")" :
-                    " (" + encodingName + ")";
-            }
-            updateStatus("Tracking: " + file.getFileName() + serverInfo + charsetInfo);
-        } catch (IOException e) {
-            // If we can't read the file properly (e.g., encoding issues), 
-            // still track it starting from the current position
-            try {
-                long size = Files.size(file);
-                filePositions.put(file, size);
-                fileLineNumbers.put(file, 0);  // Start from line 0 if we can't count
-                if (serverName != null) {
-                    fileServerNames.put(file, serverName);
-                }
-                fileCharsets.put(file, charset);
-                if (iconvEncoding != null) {
-                    fileIconvEncodings.put(file, iconvEncoding);
-                }
-                fileUseIconv.put(file, useIconv);
-                String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-                updateStatus("Tracking: " + file.getFileName() + serverInfo);
-            } catch (IOException ex) {
-                // Only log error if we truly can't access the file
-                updateStatus("Error initializing file: " + file + " - " + ex.getMessage());
-            }
-        }
-    }
-    
-    /**
-     * Counts the number of lines in a file.
-     * Uses the specified charset to handle various encodings including EBCDIC.
-     */
-    private int countLines(Path file, Charset charset) throws IOException {
-        return countLines(file, charset, null, false);
-    }
-    
-    /**
-     * Counts the number of lines in a file.
-     * Supports iconv-based conversion for better EBCDIC compatibility.
-     */
-    private int countLines(Path file, Charset charset, String iconvEncoding, boolean useIconv) 
-            throws IOException {
-        if (useIconv && iconvEncoding != null && IconvConverter.isIconvAvailable()) {
-            // Use iconv for conversion
-            String[] lines = IconvConverter.readEbcdicFileLines(file, iconvEncoding);
-            return lines.length;
-        }
-        
-        // Use Java's built-in charset handling
-        int count = 0;
-        try (BufferedReader reader = Files.newBufferedReader(file, charset)) {
-            while (reader.readLine() != null) {
-                count++;
-            }
-        }
-        return count;
-    }
-    
-    /**
-     * Polls all watched files for changes.
+     * Polls all watched paths for changes. Never throws: an exception escaping a
+     * scheduled task would silently cancel all future polls.
      */
     private void pollFiles() {
         if (!running) {
             return;
         }
-        
-        Set<Path> currentFiles = new HashSet<>();
-        
-        // Poll legacy watch paths
-        if (config.getWatchPaths() != null) {
-            for (String pathStr : config.getWatchPaths()) {
-                pollPath(pathStr, null, StandardCharsets.UTF_8, null, false, currentFiles);
-            }
-        }
-        
-        // Poll server-based paths from initial config
-        if (config.getServers() != null) {
-            for (ServerPath server : config.getServers()) {
-                pollPath(server.getPath(), server.getServerName(), server.getCharset(), 
-                         server.getIconvEncoding(), server.isUseIconv(), currentFiles);
-            }
-        }
-        
-        // Poll dynamically added server paths (from hot reload)
-        synchronized (dynamicServerPaths) {
-            for (ServerPath server : dynamicServerPaths) {
-                pollPath(server.getPath(), server.getServerName(), server.getCharset(),
-                         server.getIconvEncoding(), server.isUseIconv(), currentFiles);
-            }
-        }
-        
-        // Check for new files
-        for (Path file : currentFiles) {
-            if (!filePositions.containsKey(file)) {
-                String serverName = fileServerNames.get(file);
-                Charset charset = fileCharsets.getOrDefault(file, StandardCharsets.UTF_8);
-                String iconvEncoding = fileIconvEncodings.get(file);
-                boolean useIconv = fileUseIconv.getOrDefault(file, false);
-                initializeFile(file, serverName, charset, iconvEncoding, useIconv);
-            }
-        }
-    }
-    
-    private void pollPath(String pathStr, String serverName, Charset charset, 
-                          String iconvEncoding, boolean useIconv, Set<Path> currentFiles) {
-        Path watchPath = Paths.get(pathStr);
-        
+        long start = System.currentTimeMillis();
         try {
-            // Check if path exists
-            if (!Files.exists(watchPath)) {
-                // Only log this warning periodically (not every poll cycle)
-                // to avoid flooding the logs
-                String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-                System.err.println("Warning: Path does not exist: " + pathStr + serverInfo);
-                return;
+            scanSources(getActiveSources(), false, true);
+            lastPollError = null;
+        } catch (Exception | StackOverflowError e) {
+            lastPollError = e.toString();
+            updateStatus("Error during poll cycle: " + e);
+        } finally {
+            long duration = System.currentTimeMillis() - start;
+            lastPollDurationMs = duration;
+            lastPollAt = start;
+            pollCount++;
+
+            long intervalMs = Math.max(1, config.getPollingIntervalSeconds()) * 1000L;
+            if (duration > intervalMs && start - lastSlowPollWarningAt > SLOW_POLL_WARNING_INTERVAL_MS) {
+                lastSlowPollWarningAt = start;
+                updateStatus("Warning: poll cycle took " + duration + "ms, longer than the polling interval ("
+                    + intervalMs + "ms). Consider increasing pollingIntervalSeconds or reducing watched files.");
             }
-            
-            if (Files.isDirectory(watchPath)) {
-                int matchingFiles = 0;
-                try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
-                    for (Path file : stream) {
-                        if (Files.isRegularFile(file) && matchesFilePattern(file)) {
-                            matchingFiles++;
-                            currentFiles.add(file);
-                            if (serverName != null && !fileServerNames.containsKey(file)) {
-                                fileServerNames.put(file, serverName);
-                            }
-                            if (!fileCharsets.containsKey(file)) {
-                                fileCharsets.put(file, charset);
-                            }
-                            if (iconvEncoding != null && !fileIconvEncodings.containsKey(file)) {
-                                fileIconvEncodings.put(file, iconvEncoding);
-                            }
-                            if (!fileUseIconv.containsKey(file)) {
-                                fileUseIconv.put(file, useIconv);
-                            }
-                            checkFileForChanges(file);
-                        }
-                    }
-                }
-                // Log if directory exists but no matching files found (for debugging)
-                if (matchingFiles == 0 && !pathStr.equals(lastEmptyPathWarned)) {
-                    String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-                    updateStatus("No matching files in: " + pathStr + serverInfo + " (patterns: " + filePatterns + ")");
-                    lastEmptyPathWarned = pathStr;
-                }
-            } else if (Files.isRegularFile(watchPath)) {
-                if (matchesFilePattern(watchPath)) {
-                    currentFiles.add(watchPath);
-                    if (serverName != null && !fileServerNames.containsKey(watchPath)) {
-                        fileServerNames.put(watchPath, serverName);
-                    }
-                    if (!fileCharsets.containsKey(watchPath)) {
-                        fileCharsets.put(watchPath, charset);
-                    }
-                    if (iconvEncoding != null && !fileIconvEncodings.containsKey(watchPath)) {
-                        fileIconvEncodings.put(watchPath, iconvEncoding);
-                    }
-                    if (!fileUseIconv.containsKey(watchPath)) {
-                        fileUseIconv.put(watchPath, useIconv);
-                    }
-                    checkFileForChanges(watchPath);
-                } else {
-                    String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-                    System.err.println("Warning: File does not match patterns: " + watchPath.getFileName() + serverInfo);
-                }
-            }
-        } catch (IOException e) {
-            // Log error to both stderr and status callback
-            String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-            String errorMsg = "Error polling: " + pathStr + serverInfo + " - " + e.getMessage();
-            System.err.println(errorMsg);
-            updateStatus(errorMsg);
         }
     }
-    
-    // Track last empty path warned to avoid repetitive warnings
-    private volatile String lastEmptyPathWarned = null;
-    
+
     /**
-     * Checks a specific file for new content.
+     * Lists the given sources, processes matching files, and prunes files that disappeared.
+     *
+     * @param initial   true to track newly found files from their end (startup / newly added path)
+     * @param fullCycle true when sources contains every active source
      */
-    private void checkFileForChanges(Path file) {
+    private void scanSources(List<ServerPath> sources, boolean initial, boolean fullCycle) {
+        long cycleStart = System.currentTimeMillis();
+        long newFileThreshold = initial ? Long.MAX_VALUE : previousPollStartedAt - NEW_FILE_MTIME_SLACK_MS;
+
+        Map<Path, Candidate> candidates = new LinkedHashMap<>();
+        Set<String> listedSources = new HashSet<>();
+        Set<String> allSourceKeys = new HashSet<>();
+        for (ServerPath source : sources) {
+            String key = sourceKey(source.getServerName(), source.getPath());
+            allSourceKeys.add(key);
+            if (listSource(source, key, candidates)) {
+                listedSources.add(key);
+            }
+        }
+
+        // Files that vanished or were replaced at their path, keyed by inode, so a renamed
+        // (rotated) file continues from where it was instead of being re-read from the start.
+        Map<Object, TrackedFile> movedFiles = new HashMap<>();
+        for (TrackedFile tf : trackedFiles.values()) {
+            if (tf.fileKey == null) {
+                continue;
+            }
+            Candidate current = candidates.get(tf.path);
+            boolean goneOrReplaced = current == null
+                ? listedSources.contains(tf.sourceKey)
+                : !tf.fileKey.equals(current.attrs.fileKey());
+            if (goneOrReplaced) {
+                movedFiles.put(tf.fileKey, tf.snapshot());
+            }
+        }
+
+        for (Candidate candidate : candidates.values()) {
+            processCandidate(candidate, newFileThreshold, movedFiles);
+        }
+
+        // Prune files that no longer exist in a successfully listed path, or whose path was removed
+        trackedFiles.values().removeIf(tf -> !candidates.containsKey(tf.path)
+            && (listedSources.contains(tf.sourceKey) || (fullCycle && !allSourceKeys.contains(tf.sourceKey))));
+        if (trackedFiles.size() < MAX_TRACKED_FILES) {
+            trackedFileLimitWarned = false;
+        }
+
+        if (fullCycle) {
+            pathStatuses.keySet().retainAll(allSourceKeys);
+            previousPollStartedAt = cycleStart;
+        }
+    }
+
+    /**
+     * Lists one watched path and adds matching regular files to candidates.
+     *
+     * @return true if the path was listed successfully (its files can be pruned if missing)
+     */
+    private boolean listSource(ServerPath source, String key, Map<Path, Candidate> candidates) {
+        Path watchPath;
         try {
-            long currentSize = Files.size(file);
-            long lastPosition = filePositions.getOrDefault(file, 0L);
-            int lastLineNumber = fileLineNumbers.getOrDefault(file, 0);
-            String serverName = fileServerNames.get(file);
-            Charset charset = fileCharsets.getOrDefault(file, StandardCharsets.UTF_8);
-            String iconvEncoding = fileIconvEncodings.get(file);
-            boolean useIconv = fileUseIconv.getOrDefault(file, false);
-            
-            if (currentSize > lastPosition) {
-                // File has grown - read new content
-                long bytesToRead = currentSize - lastPosition;
-                String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-                
-                // Debug: Log when new content is detected
-                if (verboseLogging) {
-                    updateStatus("New content detected in " + file.getFileName() + serverInfo + 
-                        " (" + bytesToRead + " bytes, pos " + lastPosition + " -> " + currentSize + ")");
-                }
-                
-                ReadResult result = readNewLinesWithPosition(file, lastPosition, charset, iconvEncoding, useIconv);
-                
-                if (!result.lines.isEmpty()) {
-                    // Debug: Log number of lines read
-                    if (verboseLogging) {
-                        updateStatus("Read " + result.lines.size() + " lines from " + file.getFileName() + serverInfo);
-                        // Show first few lines for debugging
-                        int previewLines = Math.min(3, result.lines.size());
-                        for (int i = 0; i < previewLines; i++) {
-                            String line = result.lines.get(i);
-                            if (line.length() > 100) {
-                                line = line.substring(0, 100) + "...";
-                            }
-                            updateStatus("  Line " + (lastLineNumber + 1 + i) + ": " + line);
-                        }
-                    }
-                    
-                    List<LogIssue> issues = parser.parseLines(
-                        serverName,
-                        file.getFileName().toString(),
-                        result.lines,
-                        lastLineNumber + 1
-                    );
-                    
-                    // Debug: Log issues found
-                    if (verboseLogging && issues.isEmpty()) {
-                        updateStatus("No issues detected in " + result.lines.size() + " lines from " + file.getFileName() + serverInfo);
-                    } else if (!issues.isEmpty()) {
-                        updateStatus("Detected " + issues.size() + " issue(s) in " + file.getFileName() + serverInfo);
-                    }
-                    
-                    for (LogIssue issue : issues) {
-                        issueCallback.accept(issue);
-                    }
-                    
-                    fileLineNumbers.put(file, lastLineNumber + result.lines.size());
-                } else if (verboseLogging && result.bytesRead > 0) {
-                    updateStatus("Read " + result.bytesRead + " bytes but no complete lines from " + file.getFileName() + serverInfo);
-                }
-                
-                // Update position to actual bytes read, not currentSize
-                // This prevents data loss if line limit was reached before end of file
-                filePositions.put(file, lastPosition + result.bytesRead);
-            } else if (currentSize < lastPosition) {
-                // File was truncated or rotated - reset tracking
-                String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-                updateStatus("File rotated: " + file.getFileName() + serverInfo);
-                filePositions.put(file, currentSize);
-                try {
-                    fileLineNumbers.put(file, countLines(file, charset, iconvEncoding, useIconv));
-                } catch (IOException countError) {
-                    // If we can't count lines, just reset to 0
-                    fileLineNumbers.put(file, 0);
-                }
-            }
-        } catch (IOException e) {
-            System.err.println("Error checking file: " + file + " - " + e.getMessage());
+            watchPath = Paths.get(source.getPath());
+        } catch (InvalidPathException e) {
+            setPathStatus(source, key, PathState.ERROR, "Invalid path (" + e.getMessage() + ")", 0);
+            return false;
         }
-    }
-    
-    // Verbose logging flag - can be enabled for debugging
-    private volatile boolean verboseLogging = false;
-    
-    /**
-     * Enables or disables verbose logging for debugging.
-     */
-    public void setVerboseLogging(boolean enabled) {
-        this.verboseLogging = enabled;
-        updateStatus("Verbose logging " + (enabled ? "enabled" : "disabled"));
-    }
-    
-    /**
-     * Returns whether verbose logging is enabled.
-     */
-    public boolean isVerboseLogging() {
-        return verboseLogging;
-    }
-    
-    /**
-     * Reads new lines from a file starting from a given position.
-     * Supports various encodings including EBCDIC.
-     */
-    private List<String> readNewLines(Path file, long startPosition, Charset charset) throws IOException {
-        return readNewLinesWithPosition(file, startPosition, charset, null, false).lines;
-    }
-    
-    /**
-     * Reads new lines from a file starting from a given position.
-     * Supports iconv-based conversion for better EBCDIC compatibility.
-     * Memory optimization: limits buffer size and number of lines read.
-     * 
-     * Returns a ReadResult containing both the lines and actual bytes read,
-     * to prevent data loss when line limit is reached before end of file.
-     */
-    private ReadResult readNewLinesWithPosition(Path file, long startPosition, Charset charset,
-                                      String iconvEncoding, boolean useIconv) throws IOException {
-        List<String> lines = new ArrayList<>();
-        long totalBytesRead = 0;
-        
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-            channel.position(startPosition);
-            
-            // Read remaining content
-            long remaining = channel.size() - startPosition;
-            if (remaining <= 0) {
-                return new ReadResult(lines, 0);
-            }
-            
-            // Use a reasonable buffer size (capped at MAX_READ_BUFFER_SIZE)
-            int bufferSize = (int) Math.min(remaining, MAX_READ_BUFFER_SIZE);
-            ByteBuffer buffer = ByteBuffer.allocate(bufferSize);
-            StringBuilder currentLine = new StringBuilder(256);  // Pre-size for typical line length
-            int bytesInCurrentLine = 0;  // Track bytes for the incomplete line
-            
-            int bytesReadThisChunk;
-            while ((bytesReadThisChunk = channel.read(buffer)) > 0 && lines.size() < MAX_LINES_PER_READ) {
-                buffer.flip();
-                
-                // Decode bytes using the specified charset or iconv
-                byte[] bytes = new byte[buffer.remaining()];
-                buffer.get(bytes);
-                
-                String content;
-                
-                // Determine conversion method based on encoding type:
-                // - EBCDIC (IBM-1047, etc.): Use iconv -f IBM-1047 -t ISO8859-1
-                // - UTF-8 or ISO8859-1: Direct read (no conversion needed)
-                boolean isEbcdic = IconvConverter.isEbcdicEncoding(iconvEncoding);
-                
-                if (isEbcdic && IconvConverter.isIconvAvailable()) {
-                    // EBCDIC encoding: Convert to ISO8859-1
-                    // Command: iconv -f IBM-1047 -t ISO8859-1
+
+        BasicFileAttributes attrs;
+        try {
+            attrs = Files.readAttributes(watchPath, BasicFileAttributes.class);
+        } catch (NoSuchFileException e) {
+            setPathStatus(source, key, PathState.MISSING, "Watch path does not exist", 0);
+            return false;
+        } catch (IOException e) {
+            setPathStatus(source, key, PathState.ERROR, "Cannot access path (" + e + ")", 0);
+            return false;
+        }
+
+        if (attrs.isDirectory()) {
+            int matching = 0;
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(watchPath)) {
+                for (Path file : stream) {
+                    // Cheap name check first, so non-matching files never cost a stat call
+                    if (!matchesFilePattern(file)) {
+                        continue;
+                    }
+                    BasicFileAttributes fileAttrs;
                     try {
-                        content = IconvConverter.convertEbcdicToReadable(bytes, iconvEncoding);
+                        fileAttrs = Files.readAttributes(file, BasicFileAttributes.class);
                     } catch (IOException e) {
-                        // Fall back to Java charset if iconv fails
-                        content = new String(bytes, charset);
+                        continue;  // Removed between listing and stat
                     }
-                } else if (StandardCharsets.ISO_8859_1.equals(charset) || "ISO8859-1".equals(iconvEncoding)) {
-                    // ISO8859-1: Direct read
-                    content = new String(bytes, StandardCharsets.ISO_8859_1);
-                } else {
-                    // UTF-8 or other: Direct read with specified charset
-                    content = new String(bytes, charset);
+                    if (!fileAttrs.isRegularFile()) {
+                        continue;
+                    }
+                    matching++;
+                    candidates.putIfAbsent(file, new Candidate(file, fileAttrs, source, key));
                 }
-                
-                // Split into lines with line count limit check
-                int lastLineEndByte = 0;  // Track position of last complete line
-                for (int i = 0; i < content.length(); i++) {
-                    if (lines.size() >= MAX_LINES_PER_READ) {
-                        // We've hit the line limit - stop processing but account for bytes read
-                        // Only count bytes up to the last complete line
-                        totalBytesRead += lastLineEndByte;
-                        return new ReadResult(lines, totalBytesRead);
-                    }
-                    
-                    char c = content.charAt(i);
-                    if (c == '\n') {
-                        lines.add(currentLine.toString());
-                        currentLine.setLength(0);
-                        bytesInCurrentLine = 0;
-                        lastLineEndByte = i + 1;  // +1 to include the newline
-                    } else if (c == '\r') {
-                        // Handle \r\n or standalone \r
-                        if (i + 1 < content.length() && content.charAt(i + 1) == '\n') {
-                            // Skip, will be handled by \n
-                        } else {
-                            lines.add(currentLine.toString());
-                            currentLine.setLength(0);
-                            bytesInCurrentLine = 0;
-                            lastLineEndByte = i + 1;
-                        }
-                    } else {
-                        // Limit line length to prevent memory issues with very long lines
-                        if (currentLine.length() < 10000) {
-                            currentLine.append(c);
-                        }
-                        bytesInCurrentLine++;
-                    }
-                }
-                
-                // If we processed all content in this chunk, add to total bytes
-                totalBytesRead += bytesReadThisChunk;
-                buffer.clear();
+            } catch (IOException | DirectoryIteratorException e) {
+                setPathStatus(source, key, PathState.ERROR, "Cannot read directory (" + e + ")", 0);
+                return false;
             }
-            
-            // Add any remaining content as the last line (if under limit)
-            if (currentLine.length() > 0 && lines.size() < MAX_LINES_PER_READ) {
-                lines.add(currentLine.toString());
+            if (matching == 0) {
+                setPathStatus(source, key, PathState.EMPTY, "No files matching " + config.getFilePatterns(), 0);
+            } else {
+                setPathStatus(source, key, PathState.OK, null, matching);
+            }
+            return true;
+        }
+
+        if (attrs.isRegularFile()) {
+            if (matchesFilePattern(watchPath)) {
+                candidates.putIfAbsent(watchPath, new Candidate(watchPath, attrs, source, key));
+                setPathStatus(source, key, PathState.OK, null, 1);
+            } else {
+                setPathStatus(source, key, PathState.NOT_MATCHING,
+                    "File does not match " + config.getFilePatterns(), 0);
+            }
+            return true;
+        }
+
+        setPathStatus(source, key, PathState.ERROR, "Not a regular file or directory", 0);
+        return false;
+    }
+
+    /**
+     * Starts tracking a newly found file if needed, then checks it for new content.
+     */
+    private void processCandidate(Candidate candidate, long newFileThreshold, Map<Object, TrackedFile> movedFiles) {
+        TrackedFile tf = trackedFiles.get(candidate.path);
+        try {
+            if (tf == null) {
+                tf = startTracking(candidate, newFileThreshold, movedFiles);
+                if (tf == null) {
+                    return;
+                }
+            }
+            checkFileForChanges(tf, candidate.attrs);
+            tf.lastError = null;
+        } catch (IOException | RuntimeException | StackOverflowError e) {
+            String message = e.toString();
+            if (tf == null || !message.equals(tf.lastError)) {
+                updateStatus("Error reading " + candidate.path + serverInfo(candidate.source.getServerName())
+                    + " - " + message);
+            }
+            if (tf != null) {
+                tf.lastError = message;
             }
         }
-        
-        return new ReadResult(lines, totalBytesRead);
     }
-    
+
+    private TrackedFile startTracking(Candidate candidate, long newFileThreshold, Map<Object, TrackedFile> movedFiles) {
+        if (trackedFiles.size() >= MAX_TRACKED_FILES) {
+            if (!trackedFileLimitWarned) {
+                trackedFileLimitWarned = true;
+                updateStatus("Warning: Maximum tracked files limit (" + MAX_TRACKED_FILES
+                    + ") reached. New files are ignored until tracked files are removed.");
+            }
+            return null;
+        }
+
+        String fileName = candidate.path.getFileName().toString();
+        String serverName = candidate.source.getServerName();
+        EncodingInfo encoding = resolveEncoding(candidate.source, fileName);
+        TrackedFile tf = new TrackedFile(candidate.path, candidate.sourceKey, serverName, encoding);
+        Object fileKey = candidate.attrs.fileKey();
+        tf.fileKey = fileKey;
+
+        String encodingInfo = StandardCharsets.UTF_8.equals(encoding.charset) ? "" : " (" + encoding.label + ")";
+        TrackedFile previous = fileKey != null ? movedFiles.remove(fileKey) : null;
+
+        if (previous != null) {
+            tf.position = previous.position;
+            tf.lineNumber = previous.lineNumber;
+            tf.lastSeenSize = previous.lastSeenSize;
+            updateStatus("Tracking renamed file: " + previous.path.getFileName() + " -> " + fileName
+                + serverInfo(serverName));
+        } else if (candidate.attrs.lastModifiedTime().toMillis() < newFileThreshold) {
+            long size = candidate.attrs.size();
+            tf.position = size;
+            tf.lastSeenSize = size;
+            if (size < LINE_COUNT_MAX_FILE_SIZE) {
+                try {
+                    tf.lineNumber = countLines(candidate.path, encoding.ebcdic);
+                } catch (IOException e) {
+                    tf.lineNumber = 0;
+                }
+            }
+            updateStatus("Tracking: " + fileName + serverInfo(serverName) + encodingInfo);
+        } else {
+            updateStatus("New file detected: " + fileName + serverInfo(serverName) + encodingInfo
+                + " - reading from start");
+        }
+
+        trackedFiles.put(candidate.path, tf);
+        return tf;
+    }
+
+    /**
+     * Resolves how to decode a file, honoring per-file encoding overrides.
+     * EBCDIC is decoded in-process when the JVM supports the code page (avoids spawning
+     * an iconv process per read); external iconv is used only as a fallback.
+     */
+    private EncodingInfo resolveEncoding(ServerPath source, String fileName) {
+        String encoding = source.getEncodingForFile(fileName);
+
+        if (IconvConverter.isEbcdicEncoding(encoding)) {
+            String iconvEncoding = IconvConverter.normalizeToIconvEncoding(encoding);
+            Charset charset = null;
+            try {
+                Charset resolved = IconvConverter.iconvEncodingToJavaCharset(iconvEncoding);
+                if (!StandardCharsets.UTF_8.equals(resolved)) {
+                    charset = resolved;
+                }
+            } catch (RuntimeException e) {
+                // Code page not available in this JVM
+            }
+            if (charset == null && !IconvConverter.isIconvAvailable()) {
+                charset = StandardCharsets.ISO_8859_1;
+            }
+            return new EncodingInfo(charset, true, iconvEncoding,
+                iconvEncoding + (charset == null ? "/iconv" : ""));
+        }
+
+        String normalized = IconvConverter.normalizeToIconvEncoding(encoding);
+        if ("ISO8859-1".equals(normalized)) {
+            return new EncodingInfo(StandardCharsets.ISO_8859_1, false, null, "ISO8859-1");
+        }
+        if (!"UTF-8".equals(normalized) && encoding != null) {
+            try {
+                Charset charset = Charset.forName(encoding.trim());
+                // Line splitting works on bytes, so only ASCII-compatible charsets are usable
+                if (Arrays.equals("\n\r".getBytes(charset), new byte[] {0x0A, CR})) {
+                    return new EncodingInfo(charset, false, null, charset.name());
+                }
+            } catch (RuntimeException e) {
+                // Unknown charset; fall back to UTF-8
+            }
+        }
+        return new EncodingInfo(StandardCharsets.UTF_8, false, null, "UTF-8");
+    }
+
+    /**
+     * Counts line terminators in a file by scanning bytes (no character decoding).
+     */
+    private static int countLines(Path file, boolean ebcdic) throws IOException {
+        int count = 0;
+        byte previous = 0;
+        byte[] buffer = new byte[64 * 1024];
+        try (InputStream in = Files.newInputStream(file)) {
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                for (int i = 0; i < read; i++) {
+                    byte b = buffer[i];
+                    if (b == CR) {
+                        count++;
+                    } else if (isLineFeed(b, ebcdic) && previous != CR) {
+                        count++;
+                    }
+                    previous = b;
+                }
+            }
+        }
+        return count;
+    }
+
+    private static boolean isLineFeed(byte b, boolean ebcdic) {
+        // EBCDIC: 0x15 = NL, 0x25 = LF
+        return ebcdic ? (b == 0x15 || b == 0x25) : b == 0x0A;
+    }
+
+    /**
+     * Checks a tracked file for new content, handling truncation and replacement.
+     */
+    private void checkFileForChanges(TrackedFile tf, BasicFileAttributes attrs) throws IOException {
+        long currentSize = attrs.size();
+        Object fileKey = attrs.fileKey();
+        String fileName = tf.path.getFileName().toString();
+        String serverInfo = serverInfo(tf.serverName);
+
+        boolean replaced = tf.fileKey != null && fileKey != null && !tf.fileKey.equals(fileKey);
+        tf.fileKey = fileKey;
+        if (replaced || currentSize < tf.position) {
+            // Rotated (new file at this path) or truncated: all current content is new
+            updateStatus("File rotated: " + fileName + serverInfo + " - reading from start");
+            tf.position = 0;
+            tf.lineNumber = 0;
+            tf.lastSeenSize = -1;
+        }
+
+        if (currentSize <= tf.position) {
+            tf.lastSeenSize = currentSize;
+            return;
+        }
+
+        // An unterminated last line is held back until the writer finishes it, or until
+        // the file stops growing for one poll.
+        boolean flushPartial = currentSize == tf.lastSeenSize;
+        tf.lastSeenSize = currentSize;
+
+        if (verboseLogging) {
+            updateStatus("New content detected in " + fileName + serverInfo + " (" + (currentSize - tf.position)
+                + " bytes, pos " + tf.position + " -> " + currentSize + ")");
+        }
+
+        ReadResult result = readNewLines(tf, currentSize, flushPartial);
+        int firstLineNumber = tf.lineNumber + 1;
+        // Advance before parsing so a parser failure can never cause the same bytes to be re-read forever
+        tf.position += result.bytesConsumed;
+        tf.lineNumber += result.lineCount;
+
+        if (result.lines.isEmpty()) {
+            if (verboseLogging && result.bytesConsumed == 0) {
+                updateStatus("Waiting for end of line in " + fileName + serverInfo);
+            }
+            return;
+        }
+
+        if (verboseLogging) {
+            updateStatus("Read " + result.lines.size() + " lines from " + fileName + serverInfo);
+            int previewLines = Math.min(3, result.lines.size());
+            for (int i = 0; i < previewLines; i++) {
+                String line = result.lines.get(i);
+                if (line.length() > 100) {
+                    line = line.substring(0, 100) + "...";
+                }
+                updateStatus("  Line " + (firstLineNumber + i) + ": " + line);
+            }
+        }
+
+        List<LogIssue> issues = parser.parseLines(tf.serverName, fileName, result.lines, firstLineNumber);
+
+        if (verboseLogging && issues.isEmpty()) {
+            updateStatus("No issues detected in " + result.lines.size() + " lines from " + fileName + serverInfo);
+        } else if (!issues.isEmpty()) {
+            updateStatus("Detected " + issues.size() + " issue(s) in " + fileName + serverInfo);
+        }
+
+        for (LogIssue issue : issues) {
+            issueCallback.accept(issue);
+        }
+    }
+
+    /**
+     * Reads complete lines from the tracked position. Lines are split on bytes before
+     * decoding, so multi-byte characters are never split across reads and byte positions
+     * are exact.
+     */
+    private ReadResult readNewLines(TrackedFile tf, long currentSize, boolean flushPartial) throws IOException {
+        long available = currentSize - tf.position;
+        byte[] buffer = new byte[(int) Math.min(available, MAX_READ_BYTES_PER_POLL)];
+        int length = 0;
+        try (FileChannel channel = FileChannel.open(tf.path, StandardOpenOption.READ)) {
+            ByteBuffer byteBuffer = ByteBuffer.wrap(buffer);
+            while (byteBuffer.hasRemaining()) {
+                int read = channel.read(byteBuffer, tf.position + length);
+                if (read <= 0) {
+                    break;
+                }
+                length += read;
+            }
+        }
+
+        EncodingInfo encoding = tf.encoding;
+        boolean decodeLines = encoding.charset != null;
+        boolean atEof = length == available;
+        List<String> lines = new ArrayList<>();
+        int lineStart = 0;
+        int consumed = 0;
+        int lineCount = 0;
+
+        for (int i = 0; i < length && lineCount < MAX_LINES_PER_READ; i++) {
+            byte b = buffer[i];
+            int terminatorLength;
+            if (isLineFeed(b, encoding.ebcdic)) {
+                terminatorLength = 1;
+            } else if (b == CR) {
+                if (i + 1 < length) {
+                    terminatorLength = isLineFeed(buffer[i + 1], encoding.ebcdic) ? 2 : 1;
+                } else if (flushPartial && atEof) {
+                    terminatorLength = 1;
+                } else {
+                    break;  // The LF of a CRLF may not be written yet
+                }
+            } else {
+                continue;
+            }
+            if (decodeLines) {
+                lines.add(decode(buffer, lineStart, i, encoding.charset));
+            }
+            lineCount++;
+            i += terminatorLength - 1;
+            lineStart = i + 1;
+            consumed = lineStart;
+        }
+
+        if (consumed < length && lineCount < MAX_LINES_PER_READ) {
+            boolean oversizedLine = lineCount == 0 && length == MAX_READ_BYTES_PER_POLL;
+            if ((flushPartial && atEof) || oversizedLine) {
+                int end = length;
+                if (end > lineStart && buffer[end - 1] == CR) {
+                    end--;
+                }
+                if (decodeLines) {
+                    lines.add(decode(buffer, lineStart, end, encoding.charset));
+                }
+                lineCount++;
+                consumed = length;
+            }
+        }
+
+        if (!decodeLines && consumed > 0) {
+            lines = convertWithIconv(Arrays.copyOf(buffer, consumed), encoding.iconvEncoding);
+        }
+
+        return new ReadResult(lines, consumed, lineCount);
+    }
+
+    private static String decode(byte[] buffer, int start, int end, Charset charset) {
+        return new String(buffer, start, Math.min(end - start, MAX_LINE_LENGTH), charset);
+    }
+
+    /** Converts a block of complete EBCDIC lines with one iconv invocation. */
+    private static List<String> convertWithIconv(byte[] block, String iconvEncoding) {
+        String text;
+        try {
+            text = IconvConverter.convertEbcdicToReadable(block, iconvEncoding);
+        } catch (IOException e) {
+            text = new String(block, StandardCharsets.ISO_8859_1);
+        }
+        List<String> lines = new ArrayList<>();
+        for (String line : ICONV_LINE_SPLIT.split(text)) {
+            lines.add(line.length() > MAX_LINE_LENGTH ? line.substring(0, MAX_LINE_LENGTH) : line);
+        }
+        return lines;
+    }
+
     /**
      * Checks if a file matches the configured file patterns.
      */
     private boolean matchesFilePattern(Path file) {
-        String fileName = file.getFileName().toString();
+        Path name = file.getFileName();
+        if (name == null) {
+            return false;
+        }
+        String fileName = name.toString();
         for (Pattern pattern : filePatterns) {
             if (pattern.matcher(fileName).matches()) {
                 return true;
@@ -717,95 +723,197 @@ public class LogFileWatcher {
         }
         return false;
     }
-    
+
+    private void setPathStatus(ServerPath source, String key, PathState state, String message, int matchingFiles) {
+        PathStatus previous = pathStatuses.put(key,
+            new PathStatus(source.getServerName(), source.getPath(), state, message, matchingFiles));
+
+        // Log only on state transitions to avoid flooding the log every poll
+        if (previous != null && previous.state == state) {
+            return;
+        }
+        String serverInfo = serverInfo(source.getServerName());
+        if (state == PathState.OK) {
+            if (previous != null) {
+                updateStatus("Watch path available again: " + source.getPath() + serverInfo
+                    + " (" + matchingFiles + " matching file(s))");
+            }
+        } else {
+            updateStatus("Warning: " + message + ": " + source.getPath() + serverInfo);
+        }
+    }
+
+    /**
+     * Returns all watched sources (legacy paths, configured servers, dynamically added),
+     * de-duplicated by server name and normalized path.
+     */
+    private List<ServerPath> getActiveSources() {
+        Map<String, ServerPath> sources = new LinkedHashMap<>();
+        for (String path : snapshot(config.getWatchPaths())) {
+            if (path != null && !path.isBlank()) {
+                sources.putIfAbsent(sourceKey(null, path), new ServerPath(null, path));
+            }
+        }
+        List<ServerPath> servers = new ArrayList<>(snapshot(config.getServers()));
+        servers.addAll(dynamicServerPaths);
+        for (ServerPath server : servers) {
+            if (server != null && server.getPath() != null && !server.getPath().isBlank()) {
+                sources.putIfAbsent(sourceKey(server.getServerName(), server.getPath()), server);
+            }
+        }
+        return new ArrayList<>(sources.values());
+    }
+
+    /** Copies a list that may be modified concurrently by web requests. */
+    private static <T> List<T> snapshot(List<T> list) {
+        if (list == null) {
+            return Collections.emptyList();
+        }
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                return new ArrayList<>(list);
+            } catch (ConcurrentModificationException e) {
+                // Retry
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    private static String sourceKey(String serverName, String path) {
+        String normalized;
+        try {
+            normalized = Paths.get(path).toAbsolutePath().normalize().toString();
+        } catch (InvalidPathException e) {
+            normalized = path;
+        }
+        return (serverName != null ? serverName : "") + "::" + normalized;
+    }
+
+    private static String serverInfo(String serverName) {
+        return serverName != null ? " [" + serverName + "]" : "";
+    }
+
+    /**
+     * Runs a task on the watcher thread so tracking state is only mutated by one thread.
+     *
+     * @param timeoutSeconds how long to wait for completion; 0 waits until done
+     */
+    private void runOnWatcherThread(String description, Runnable task, long timeoutSeconds) {
+        Future<?> future;
+        try {
+            future = scheduler.submit(() -> {
+                try {
+                    task.run();
+                } catch (Exception | StackOverflowError e) {
+                    updateStatus("Error during " + description + ": " + e);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            updateStatus("Watcher is stopped; skipped " + description);
+            return;
+        }
+        try {
+            if (timeoutSeconds > 0) {
+                future.get(timeoutSeconds, TimeUnit.SECONDS);
+            } else {
+                future.get();
+            }
+        } catch (TimeoutException e) {
+            updateStatus("Still running " + description + " in the background");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            // Already reported inside the task
+        }
+    }
+
+    /**
+     * Enables or disables verbose logging for debugging.
+     */
+    public void setVerboseLogging(boolean enabled) {
+        this.verboseLogging = enabled;
+        updateStatus("Verbose logging " + (enabled ? "enabled" : "disabled"));
+    }
+
+    /**
+     * Returns whether verbose logging is enabled.
+     */
+    public boolean isVerboseLogging() {
+        return verboseLogging;
+    }
+
     private void updateStatus(String status) {
         if (statusCallback != null) {
             statusCallback.accept(status);
         }
     }
-    
+
     /**
      * Returns the list of currently tracked files.
      */
     public Set<Path> getTrackedFiles() {
-        return new HashSet<>(filePositions.keySet());
+        return new HashSet<>(trackedFiles.keySet());
     }
-    
+
     /**
      * Returns the server name for a tracked file.
      */
     public String getServerName(Path file) {
-        return fileServerNames.get(file);
+        TrackedFile tf = trackedFiles.get(file);
+        return tf != null ? tf.serverName : null;
     }
-    
+
     /**
      * Forces a rescan of all watched directories.
      */
     public void rescan() {
-        filePositions.clear();
-        fileLineNumbers.clear();
-        fileServerNames.clear();
-        fileCharsets.clear();
-        fileIconvEncodings.clear();
-        fileUseIconv.clear();
-        initialScan();
+        runOnWatcherThread("rescan", () -> {
+            trackedFiles.clear();
+            pathStatuses.clear();
+            scanSources(getActiveSources(), true, true);
+        }, 60);
     }
-    
+
     /**
      * Adds new server paths to watch dynamically.
      * This is called when the configuration file is updated with new servers.
-     * 
+     *
      * @param newServers List of new ServerPath objects to watch
      */
     public void addServerPaths(List<ServerPath> newServers) {
         if (newServers == null || newServers.isEmpty()) {
             return;
         }
-        
-        int addedCount = 0;
-        
+
+        List<ServerPath> toScan = new ArrayList<>();
         for (ServerPath server : newServers) {
-            String serverName = server.getServerName();
-            String pathStr = server.getPath();
-            Charset charset = server.getCharset();
-            String iconvEncoding = server.getIconvEncoding();
-            boolean useIconv = server.isUseIconv();
-            
-            if (pathStr == null || pathStr.isEmpty()) {
+            if (server == null || server.getPath() == null || server.getPath().isEmpty()) {
                 continue;
             }
-            
-            String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-            String encodingInfo = server.getEncoding() != null ? 
-                " (" + server.getEncoding() + (useIconv ? "/iconv" : "") + ")" : "";
-            updateStatus("Adding new server path: " + pathStr + serverInfo + encodingInfo);
-            
-            // Add to dynamic server paths list so pollFiles() will monitor it
-            dynamicServerPaths.add(server);
-            addedCount++;
-            
-            // Scan the new path for initial file discovery
-            scanPath(pathStr, serverName, charset, iconvEncoding, useIconv);
+            if (registerServerPath(server)) {
+                toScan.add(server);
+            }
         }
-        
-        if (addedCount > 0) {
-            updateStatus("Now watching " + getTotalWatchPaths() + " path(s)");
+
+        if (!toScan.isEmpty()) {
+            runOnWatcherThread("scan of new path(s)", () -> scanSources(toScan, true, false), 30);
+            updateStatus("Now watching " + getActiveSources().size() + " path(s)");
         }
     }
-    
+
     /**
      * Adds a single server path to watch dynamically.
-     * 
+     *
      * @param serverName The server name (can be null for legacy paths)
      * @param path The path to watch
      */
     public void addServerPath(String serverName, String path) {
         addServerPath(serverName, path, null, false);
     }
-    
+
     /**
      * Adds a single server path to watch dynamically with custom encoding.
-     * 
+     *
      * @param serverName The server name (can be null for legacy paths)
      * @param path The path to watch
      * @param encoding The character encoding (e.g., "UTF-8", "EBCDIC", "Cp1047", "IBM-1047")
@@ -813,10 +921,10 @@ public class LogFileWatcher {
     public void addServerPath(String serverName, String path, String encoding) {
         addServerPath(serverName, path, encoding, false);
     }
-    
+
     /**
      * Adds a single server path to watch dynamically with custom encoding and iconv option.
-     * 
+     *
      * @param serverName The server name (can be null for legacy paths)
      * @param path The path to watch
      * @param encoding The character encoding (e.g., "UTF-8", "EBCDIC", "Cp1047", "IBM-1047")
@@ -826,100 +934,128 @@ public class LogFileWatcher {
         if (path == null || path.isEmpty()) {
             return;
         }
-        
-        ServerPath server = new ServerPath(serverName, path, null, encoding, useIconv);
-        String serverInfo = serverName != null ? " [" + serverName + "]" : "";
-        String encodingInfo = encoding != null ? 
-            " (" + encoding + (useIconv ? "/iconv" : "") + ")" : "";
-        updateStatus("Adding new server path: " + path + serverInfo + encodingInfo);
-        
-        // Add to dynamic server paths list so pollFiles() will monitor it
-        dynamicServerPaths.add(server);
-        
-        // Scan the new path for initial file discovery
-        scanPath(path, serverName, server.getCharset(), server.getIconvEncoding(), useIconv);
-        
-        updateStatus("Now watching " + getTotalWatchPaths() + " path(s)");
+        addServerPaths(Collections.singletonList(new ServerPath(serverName, path, null, encoding, useIconv)));
     }
-    
+
+    /**
+     * Registers a dynamic path unless it is already watched (e.g. added through the UI,
+     * which also updates the config and triggers the config file watcher).
+     *
+     * @return true if the path needs an initial scan
+     */
+    private boolean registerServerPath(ServerPath server) {
+        String key = sourceKey(server.getServerName(), server.getPath());
+        boolean alreadyActive = false;
+        for (ServerPath active : getActiveSources()) {
+            if (key.equals(sourceKey(active.getServerName(), active.getPath()))) {
+                alreadyActive = true;
+                break;
+            }
+        }
+        if (!alreadyActive) {
+            dynamicServerPaths.add(server);
+            String encodingInfo = server.getEncoding() != null ? " (" + server.getEncoding() + ")" : "";
+            updateStatus("Adding new server path: " + server.getPath() + serverInfo(server.getServerName()) + encodingInfo);
+        }
+        // Scan immediately unless this path has already been scanned
+        return !pathStatuses.containsKey(key);
+    }
+
     /**
      * Returns true if the watcher is currently running.
      */
     public boolean isRunning() {
         return running;
     }
-    
+
+    /**
+     * Returns the health of a watched path, or null if it has not been checked yet.
+     */
+    public Map<String, Object> getPathStatus(String serverName, String path) {
+        PathStatus status = pathStatuses.get(sourceKey(serverName, path));
+        return status != null ? pathStatusToMap(status) : null;
+    }
+
+    /**
+     * Returns a short summary of watcher health for status displays.
+     */
+    public Map<String, Object> getHealthSummary() {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("running", running);
+        summary.put("trackedFilesCount", trackedFiles.size());
+        summary.put("lastPollAt", lastPollAt);
+        summary.put("lastPollDurationMs", lastPollDurationMs);
+        summary.put("pollCount", pollCount);
+        summary.put("lastPollError", lastPollError);
+
+        int problemPaths = 0;
+        for (PathStatus status : pathStatuses.values()) {
+            if (status.state != PathState.OK) {
+                problemPaths++;
+            }
+        }
+        summary.put("watchedPathCount", pathStatuses.size());
+        summary.put("problemPathCount", problemPaths);
+        return summary;
+    }
+
+    private static Map<String, Object> pathStatusToMap(PathStatus status) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("state", status.state.name());
+        map.put("message", status.message);
+        map.put("matchingFiles", status.matchingFiles);
+        map.put("checkedAt", status.checkedAt);
+        return map;
+    }
+
     /**
      * Returns diagnostic information about the watcher status.
      * Useful for troubleshooting.
      */
     public Map<String, Object> getDiagnostics() {
-        Map<String, Object> diagnostics = new LinkedHashMap<>();
-        diagnostics.put("running", running);
-        diagnostics.put("trackedFilesCount", filePositions.size());
+        Map<String, Object> diagnostics = new LinkedHashMap<>(getHealthSummary());
         diagnostics.put("maxTrackedFiles", MAX_TRACKED_FILES);
         diagnostics.put("pollingIntervalSeconds", config.getPollingIntervalSeconds());
-        
-        // File patterns
+
         List<String> patterns = new ArrayList<>();
         for (Pattern p : filePatterns) {
             patterns.add(p.pattern());
         }
         diagnostics.put("filePatterns", patterns);
-        
-        // Configured paths
+
         List<Map<String, Object>> configuredPaths = new ArrayList<>();
-        if (config.getWatchPaths() != null) {
-            for (String path : config.getWatchPaths()) {
-                Map<String, Object> pathInfo = new LinkedHashMap<>();
-                pathInfo.put("path", path);
-                pathInfo.put("type", "legacy");
-                pathInfo.put("exists", Files.exists(Paths.get(path)));
-                configuredPaths.add(pathInfo);
-            }
-        }
-        if (config.getServers() != null) {
-            for (ServerPath server : config.getServers()) {
-                Map<String, Object> pathInfo = new LinkedHashMap<>();
-                pathInfo.put("path", server.getPath());
-                pathInfo.put("serverName", server.getServerName());
-                pathInfo.put("type", "server");
-                pathInfo.put("exists", Files.exists(Paths.get(server.getPath())));
-                pathInfo.put("encoding", server.getEncoding());
-                configuredPaths.add(pathInfo);
-            }
-        }
-        for (ServerPath server : dynamicServerPaths) {
+        for (ServerPath source : getActiveSources()) {
             Map<String, Object> pathInfo = new LinkedHashMap<>();
-            pathInfo.put("path", server.getPath());
-            pathInfo.put("serverName", server.getServerName());
-            pathInfo.put("type", "dynamic");
-            pathInfo.put("exists", Files.exists(Paths.get(server.getPath())));
-            pathInfo.put("encoding", server.getEncoding());
+            pathInfo.put("path", source.getPath());
+            pathInfo.put("serverName", source.getServerName());
+            pathInfo.put("type", dynamicServerPaths.contains(source) ? "dynamic"
+                : source.getServerName() != null ? "server" : "legacy");
+            pathInfo.put("encoding", source.getEncoding());
+            PathStatus status = pathStatuses.get(sourceKey(source.getServerName(), source.getPath()));
+            if (status != null) {
+                pathInfo.put("exists", status.state != PathState.MISSING);
+                pathInfo.putAll(pathStatusToMap(status));
+            }
             configuredPaths.add(pathInfo);
         }
         diagnostics.put("configuredPaths", configuredPaths);
-        
-        // Tracked files
+
         List<Map<String, Object>> trackedFilesList = new ArrayList<>();
-        for (Path file : filePositions.keySet()) {
+        for (TrackedFile tf : trackedFiles.values()) {
             Map<String, Object> fileInfo = new LinkedHashMap<>();
-            fileInfo.put("path", file.toString());
-            fileInfo.put("fileName", file.getFileName().toString());
-            fileInfo.put("serverName", fileServerNames.get(file));
-            fileInfo.put("position", filePositions.get(file));
-            fileInfo.put("lineNumber", fileLineNumbers.get(file));
-            fileInfo.put("charset", fileCharsets.get(file) != null ? fileCharsets.get(file).displayName() : "UTF-8");
-            try {
-                fileInfo.put("currentSize", Files.size(file));
-                fileInfo.put("exists", true);
-            } catch (IOException e) {
-                fileInfo.put("exists", false);
-            }
+            fileInfo.put("path", tf.path.toString());
+            fileInfo.put("fileName", tf.path.getFileName().toString());
+            fileInfo.put("serverName", tf.serverName);
+            fileInfo.put("position", tf.position);
+            fileInfo.put("lineNumber", tf.lineNumber);
+            fileInfo.put("charset", tf.encoding.label);
+            fileInfo.put("currentSize", tf.lastSeenSize);
+            fileInfo.put("exists", true);
+            fileInfo.put("lastError", tf.lastError);
             trackedFilesList.add(fileInfo);
         }
         diagnostics.put("trackedFiles", trackedFilesList);
-        
+
         return diagnostics;
     }
 }
