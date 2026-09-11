@@ -174,6 +174,7 @@ public class ApiServlet extends HttpServlet {
         int limit = getIntParam(req, "limit", 100);
         String severity = req.getParameter("severity");
         String server = req.getParameter("server");
+        String search = normalizeSearch(req.getParameter("q"));
         String fromDate = req.getParameter("from");
         String toDate = req.getParameter("to");
         
@@ -192,8 +193,8 @@ public class ApiServlet extends HttpServlet {
         LocalDateTime to = parseDateTime(toDate, false);
         
         // Get filtered issues
-        List<LogIssue> issues = issueStore.getFilteredIssues(sev, server, from, to, offset, limit);
-        long totalFiltered = issueStore.getFilteredIssuesCount(sev, server, from, to);
+        List<LogIssue> issues = issueStore.getFilteredIssues(sev, server, search, from, to, offset, limit);
+        long totalFiltered = issueStore.getFilteredIssuesCount(sev, server, search, from, to);
         
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("total", issueStore.getCurrentIssuesCount());
@@ -208,6 +209,7 @@ public class ApiServlet extends HttpServlet {
         Map<String, Object> filters = new LinkedHashMap<>();
         filters.put("severity", severity);
         filters.put("server", server);
+        filters.put("q", search);
         filters.put("from", fromDate);
         filters.put("to", toDate);
         response.put("filters", filters);
@@ -475,6 +477,7 @@ public class ApiServlet extends HttpServlet {
     private void handleExportIssues(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         String severity = req.getParameter("severity");
         String server = req.getParameter("server");
+        String search = normalizeSearch(req.getParameter("q"));
         String fromDate = req.getParameter("from");
         String toDate = req.getParameter("to");
         String format = req.getParameter("format"); // json or csv
@@ -493,7 +496,7 @@ public class ApiServlet extends HttpServlet {
         LocalDateTime to = parseDateTime(toDate, false);
         
         // Get all filtered issues (no pagination for export)
-        List<LogIssue> issues = issueStore.getFilteredIssues(sev, server, from, to, 0, Integer.MAX_VALUE);
+        List<LogIssue> issues = issueStore.getFilteredIssues(sev, server, search, from, to, 0, Integer.MAX_VALUE);
         
         // Set content-type BEFORE getting writer
         if ("csv".equalsIgnoreCase(format)) {
@@ -580,6 +583,17 @@ public class ApiServlet extends HttpServlet {
         return map;
     }
     
+    /**
+     * Trims the search text; blank means no search, and overly long input is truncated.
+     */
+    private static String normalizeSearch(String search) {
+        if (search == null || search.isBlank()) {
+            return null;
+        }
+        String trimmed = search.trim();
+        return trimmed.length() > 200 ? trimmed.substring(0, 200) : trimmed;
+    }
+
     private int getIntParam(HttpServletRequest req, String name, int defaultValue) {
         String value = req.getParameter(name);
         if (value != null && !value.isEmpty()) {

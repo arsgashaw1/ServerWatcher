@@ -202,7 +202,7 @@ public class IssueStore implements IssueRepository {
      * Enforces maximum result limit to prevent memory exhaustion.
      */
     @Override
-    public List<LogIssue> getFilteredIssues(Severity severity, String serverName, 
+    public List<LogIssue> getFilteredIssues(Severity severity, String serverName, String searchText,
                                              LocalDateTime from, LocalDateTime to,
                                              int offset, int limit) {
         // Enforce maximum limit to prevent memory exhaustion
@@ -212,6 +212,7 @@ public class IssueStore implements IssueRepository {
         return issues.stream()
                 .filter(i -> severity == null || i.getSeverity() == severity)
                 .filter(i -> serverName == null || serverName.isEmpty() || serverName.equals(i.getServerName()))
+                .filter(i -> matchesSearch(i, searchText))
                 .filter(i -> {
                     LocalDateTime dt = i.getDetectedAt();
                     return (from == null || !dt.isBefore(from)) && (to == null || !dt.isAfter(to));
@@ -225,11 +226,12 @@ public class IssueStore implements IssueRepository {
      * Gets total count of filtered issues.
      */
     @Override
-    public long getFilteredIssuesCount(Severity severity, String serverName, 
+    public long getFilteredIssuesCount(Severity severity, String serverName, String searchText,
                                         LocalDateTime from, LocalDateTime to) {
         return issues.stream()
                 .filter(i -> severity == null || i.getSeverity() == severity)
                 .filter(i -> serverName == null || serverName.isEmpty() || serverName.equals(i.getServerName()))
+                .filter(i -> matchesSearch(i, searchText))
                 .filter(i -> {
                     LocalDateTime dt = i.getDetectedAt();
                     return (from == null || !dt.isBefore(from)) && (to == null || !dt.isAfter(to));
@@ -237,6 +239,25 @@ public class IssueStore implements IssueRepository {
                 .count();
     }
     
+    /**
+     * Case-insensitive substring match across message, type, file, server and stack trace.
+     */
+    private static boolean matchesSearch(LogIssue issue, String searchText) {
+        if (searchText == null || searchText.isBlank()) {
+            return true;
+        }
+        String needle = searchText.trim().toLowerCase(Locale.ROOT);
+        return containsIgnoreCase(issue.getMessage(), needle)
+            || containsIgnoreCase(issue.getIssueType(), needle)
+            || containsIgnoreCase(issue.getFileName(), needle)
+            || containsIgnoreCase(issue.getServerName(), needle)
+            || containsIgnoreCase(issue.getFullStackTrace(), needle);
+    }
+
+    private static boolean containsIgnoreCase(String value, String lowerNeedle) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(lowerNeedle);
+    }
+
     /**
      * Gets the earliest issue timestamp.
      */

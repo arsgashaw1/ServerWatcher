@@ -403,7 +403,7 @@ public class H2IssueStore implements IssueRepository {
      * Gets issues with combined filters.
      */
     @Override
-    public List<LogIssue> getFilteredIssues(Severity severity, String serverName,
+    public List<LogIssue> getFilteredIssues(Severity severity, String serverName, String searchText,
                                              LocalDateTime from, LocalDateTime to,
                                              int offset, int limit) {
         int effectiveLimit = Math.min(limit, MAX_FILTER_RESULTS);
@@ -424,6 +424,7 @@ public class H2IssueStore implements IssueRepository {
                 sql.append(" AND server_name = ?");
                 params.add(serverName);
             }
+            appendSearchFilter(sql, params, searchText);
             if (from != null) {
                 sql.append(" AND detected_at >= ?");
                 params.add(Timestamp.valueOf(from));
@@ -464,7 +465,7 @@ public class H2IssueStore implements IssueRepository {
      * Gets total count of filtered issues.
      */
     @Override
-    public long getFilteredIssuesCount(Severity severity, String serverName,
+    public long getFilteredIssuesCount(Severity severity, String serverName, String searchText,
                                         LocalDateTime from, LocalDateTime to) {
         try {
             Connection conn = dbManager.getConnection();
@@ -480,6 +481,7 @@ public class H2IssueStore implements IssueRepository {
                 sql.append(" AND server_name = ?");
                 params.add(serverName);
             }
+            appendSearchFilter(sql, params, searchText);
             if (from != null) {
                 sql.append(" AND detected_at >= ?");
                 params.add(Timestamp.valueOf(from));
@@ -892,6 +894,31 @@ public class H2IssueStore implements IssueRepository {
         } catch (IllegalArgumentException | NullPointerException e) {
             return Severity.ERROR;
         }
+    }
+
+    /**
+     * Adds a case-insensitive substring match across the columns users search in.
+     * LIKE wildcards in the search text are escaped so they match literally.
+     */
+    private static void appendSearchFilter(StringBuilder sql, List<Object> params, String searchText) {
+        if (searchText == null || searchText.isBlank()) {
+            return;
+        }
+        String pattern = "%" + escapeLike(searchText.trim().toLowerCase(Locale.ROOT)) + "%";
+        String[] columns = {"message", "issue_type", "file_name", "server_name", "full_stack_trace"};
+        sql.append(" AND (");
+        for (int i = 0; i < columns.length; i++) {
+            if (i > 0) {
+                sql.append(" OR ");
+            }
+            sql.append("LOWER(").append(columns[i]).append(") LIKE ? ESCAPE '\\'");
+            params.add(pattern);
+        }
+        sql.append(")");
+    }
+
+    private static String escapeLike(String text) {
+        return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     /**

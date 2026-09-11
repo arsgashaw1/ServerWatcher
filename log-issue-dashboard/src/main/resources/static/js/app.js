@@ -9,6 +9,7 @@ class LogDashboard {
         this.charts = {};
         this.selectedIssue = null;
         this.filters = {
+            search: '',
             severity: '',
             server: '',
             dateFrom: '',
@@ -103,6 +104,7 @@ class LogDashboard {
         document.getElementById('clearBtn').addEventListener('click', () => this.clearAll());
         
         // Filter listeners
+        document.getElementById('searchFilter').addEventListener('input', (e) => this.filterBySearch(e.target.value));
         document.getElementById('severityFilter').addEventListener('change', (e) => this.filterBySeverity(e.target.value));
         document.getElementById('serverFilter').addEventListener('change', (e) => this.filterByServer(e.target.value));
         document.getElementById('dateFromFilter').addEventListener('change', (e) => this.filterByDateFrom(e.target.value));
@@ -146,6 +148,12 @@ class LogDashboard {
         
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
+            // "/" focuses search unless the user is already typing in a field
+            const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+            if (e.key === '/' && !typing) {
+                e.preventDefault();
+                document.getElementById('searchFilter').focus();
+            }
             if (e.key === 'Escape') {
                 this.closeModal();
                 this.closeExportModal();
@@ -289,6 +297,7 @@ class LogDashboard {
                 limit: this.pagination.limit
             });
             
+            if (this.filters.search) params.append('q', this.filters.search);
             if (this.filters.severity) params.append('severity', this.filters.severity);
             if (this.filters.server) params.append('server', this.filters.server);
             if (this.filters.dateFrom) params.append('from', this.filters.dateFrom);
@@ -311,7 +320,7 @@ class LogDashboard {
     
     updateIssueCount() {
         const countEl = document.getElementById('issueCount');
-        if (this.filters.severity || this.filters.server || this.filters.dateFrom || this.filters.dateTo) {
+        if (this.filters.search || this.filters.severity || this.filters.server || this.filters.dateFrom || this.filters.dateTo) {
             countEl.textContent = `(${this.pagination.totalFiltered} of ${this.pagination.total} issues)`;
         } else {
             countEl.textContent = `(${this.pagination.total} issues)`;
@@ -507,6 +516,15 @@ class LogDashboard {
         if (this.filters.server && issue.serverName !== this.filters.server) {
             return false;
         }
+
+        // Check text search (same fields as the server-side search)
+        if (this.filters.search) {
+            const needle = this.filters.search.toLowerCase();
+            const fields = [issue.message, issue.issueType, issue.fileName, issue.serverName, issue.fullStackTrace];
+            if (!fields.some(value => value && value.toLowerCase().includes(needle))) {
+                return false;
+            }
+        }
         
         // Check datetime filters
         if (this.filters.dateFrom || this.filters.dateTo) {
@@ -559,7 +577,7 @@ class LogDashboard {
         
         if (filtered.length === 0) {
             const hasFilters = this.filters.severity || this.filters.server || 
-                              this.filters.dateFrom || this.filters.dateTo;
+                              this.filters.dateFrom || this.filters.dateTo || this.filters.search;
             list.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-icon">${hasFilters ? '🔍' : '📋'}</div>
@@ -782,6 +800,20 @@ class LogDashboard {
     }
     
     // Filters
+    /**
+     * Debounced text search, so typing does not send a request per keystroke.
+     */
+    filterBySearch(text) {
+        clearTimeout(this.searchTimer);
+        this.searchTimer = setTimeout(() => {
+            const value = text.trim();
+            if (value === this.filters.search) return;
+            this.filters.search = value;
+            this.pagination.offset = 0;
+            this.loadIssues();
+        }, 300);
+    }
+
     filterBySeverity(severity) {
         this.filters.severity = severity;
         this.pagination.offset = 0;
@@ -862,12 +894,15 @@ class LogDashboard {
     
     clearFilters() {
         this.filters = {
+            search: '',
             severity: '',
             server: '',
             dateFrom: '',
             dateTo: ''
         };
         
+        clearTimeout(this.searchTimer);
+        document.getElementById('searchFilter').value = '';
         document.getElementById('severityFilter').value = '';
         document.getElementById('serverFilter').value = '';
         document.getElementById('dateFromFilter').value = '';
@@ -901,6 +936,7 @@ class LogDashboard {
         const format = document.querySelector('input[name="exportFormat"]:checked').value;
         
         const params = new URLSearchParams({ format });
+        if (this.filters.search) params.append('q', this.filters.search);
         if (this.filters.severity) params.append('severity', this.filters.severity);
         if (this.filters.server) params.append('server', this.filters.server);
         if (this.filters.dateFrom) params.append('from', this.filters.dateFrom);

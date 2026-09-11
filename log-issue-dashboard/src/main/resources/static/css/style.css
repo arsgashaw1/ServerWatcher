@@ -350,6 +350,10 @@ body {
     align-items: center;
 }
 
+.filter-group-search {
+    flex: 1 1 260px;
+}
+
 .filter-spacer {
     flex: 1;
     min-width: 1rem;

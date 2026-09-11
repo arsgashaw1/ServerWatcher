@@ -83,17 +83,35 @@ public interface IssueRepository {
     List<LogIssue> getIssuesByDateRange(LocalDateTime from, LocalDateTime to);
     
     /**
-     * Gets issues with combined filters.
+     * Gets issues with combined filters. searchText is matched case-insensitively against the
+     * message, issue type, file, server and stack trace; null or blank disables text search.
      */
-    List<LogIssue> getFilteredIssues(Severity severity, String serverName,
+    List<LogIssue> getFilteredIssues(Severity severity, String serverName, String searchText,
                                       LocalDateTime from, LocalDateTime to,
                                       int offset, int limit);
+
+    /**
+     * Gets issues with combined filters, without text search.
+     */
+    default List<LogIssue> getFilteredIssues(Severity severity, String serverName,
+                                             LocalDateTime from, LocalDateTime to,
+                                             int offset, int limit) {
+        return getFilteredIssues(severity, serverName, null, from, to, offset, limit);
+    }
     
     /**
      * Gets total count of filtered issues.
      */
-    long getFilteredIssuesCount(Severity severity, String serverName,
+    long getFilteredIssuesCount(Severity severity, String serverName, String searchText,
                                  LocalDateTime from, LocalDateTime to);
+
+    /**
+     * Gets total count of filtered issues, without text search.
+     */
+    default long getFilteredIssuesCount(Severity severity, String serverName,
+                                        LocalDateTime from, LocalDateTime to) {
+        return getFilteredIssuesCount(severity, serverName, null, from, to);
+    }
     
     /**
      * Gets the earliest issue timestamp.
