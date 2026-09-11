@@ -226,6 +226,7 @@ public class LogDashboardApp {
         );
         // Paths removed from the config file stop being watched without a restart
         configWatcher.setRemovedServersCallback(logWatcher::removeServerPaths);
+        configWatcher.setFilePatternsCallback(logWatcher::updateFilePatterns);
         
         // Add shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

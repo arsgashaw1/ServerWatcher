@@ -36,7 +36,8 @@ public class LogFileWatcher {
     private final Consumer<LogIssue> issueCallback;
     private final Consumer<String> statusCallback;
     private final ScheduledExecutorService scheduler;
-    private final List<Pattern> filePatterns;
+    private volatile List<Pattern> filePatterns;
+    private volatile List<String> filePatternsSource;  // Configured patterns the compiled ones came from
 
     private final Map<Path, TrackedFile> trackedFiles = new ConcurrentHashMap<>();
     private final Map<String, PathStatus> pathStatuses = new ConcurrentHashMap<>();
@@ -179,8 +180,36 @@ public class LogFileWatcher {
             t.setDaemon(true);
             return t;
         });
-        this.filePatterns = compileFilePatterns(config.getFilePatterns());
+        this.filePatternsSource = snapshot(config.getFilePatterns());
+        this.filePatterns = compileFilePatterns(filePatternsSource);
         this.running = false;
+    }
+
+    /**
+     * Recompiles file patterns if the configured patterns changed (e.g. on the Config page).
+     * The following scan prunes files that no longer match and picks up newly matching ones.
+     */
+    private void refreshFilePatterns() {
+        List<String> configured = snapshot(config.getFilePatterns());
+        if (!configured.isEmpty() && !configured.equals(filePatternsSource)) {
+            filePatterns = compileFilePatterns(configured);
+            filePatternsSource = configured;
+            updateStatus("File patterns updated: " + configured);
+        }
+    }
+
+    /**
+     * Applies file patterns from the configuration file. Empty lists are ignored because
+     * they would stop watching every file.
+     */
+    public void updateFilePatterns(List<String> patterns) {
+        if (patterns == null || patterns.isEmpty()) {
+            updateStatus("Ignoring empty file pattern list");
+            return;
+        }
+        if (!patterns.equals(snapshot(config.getFilePatterns()))) {
+            config.setFilePatterns(new ArrayList<>(patterns));
+        }
     }
 
     private List<Pattern> compileFilePatterns(List<String> patterns) {
@@ -276,6 +305,7 @@ public class LogFileWatcher {
      */
     private void scanSources(List<ServerPath> sources, boolean initial, boolean fullCycle) {
         long cycleStart = System.currentTimeMillis();
+        refreshFilePatterns();
         long newFileThreshold = initial ? Long.MAX_VALUE : previousPollStartedAt - NEW_FILE_MTIME_SLACK_MS;
 
         Map<Path, Candidate> candidates = new LinkedHashMap<>();

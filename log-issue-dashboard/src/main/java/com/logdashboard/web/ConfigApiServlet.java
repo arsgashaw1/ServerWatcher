@@ -855,7 +855,7 @@ public class ConfigApiServlet extends HttpServlet {
         
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
-        result.put("message", "File pattern added. Restart required for full effect.");
+        result.put("message", "File pattern added and applied.");
         result.put("patterns", config.getFilePatterns());
         
         out.write(GSON.toJson(result));
@@ -899,7 +899,7 @@ public class ConfigApiServlet extends HttpServlet {
         
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
-        result.put("message", "File pattern removed. Restart required for full effect.");
+        result.put("message", "File pattern removed and applied.");
         result.put("patterns", config.getFilePatterns());
         
         out.write(GSON.toJson(result));

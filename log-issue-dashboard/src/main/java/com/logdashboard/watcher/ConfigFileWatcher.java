@@ -24,6 +24,8 @@ public class ConfigFileWatcher {
     private volatile boolean running;
     private Map<String, ServerPath> knownServers;
     private volatile Consumer<List<ServerPath>> removedServersCallback;
+    private volatile Consumer<List<String>> filePatternsCallback;
+    private List<String> knownFilePatterns;
     // Removals seen on the previous read; applied only if the next read confirms them
     private Set<String> pendingRemovalKeys = Collections.emptySet();
     private Set<String> knownWatchPaths;
@@ -56,6 +58,9 @@ public class ConfigFileWatcher {
         if (initialConfig.getWatchPaths() != null) {
             knownWatchPaths.addAll(initialConfig.getWatchPaths());
         }
+
+        knownFilePatterns = initialConfig.getFilePatterns() != null
+            ? new ArrayList<>(initialConfig.getFilePatterns()) : Collections.emptyList();
         
         // Get initial modification time
         try {
@@ -178,6 +183,17 @@ public class ConfigFileWatcher {
                 }
             }
             
+            // Apply file pattern changes (an empty list is ignored: it would stop watching everything)
+            List<String> newPatterns = newConfig.getFilePatterns();
+            if (newPatterns != null && !newPatterns.isEmpty() && !newPatterns.equals(knownFilePatterns)) {
+                knownFilePatterns = new ArrayList<>(newPatterns);
+                updateStatus("File patterns changed: " + newPatterns);
+                Consumer<List<String>> patternsCallback = filePatternsCallback;
+                if (patternsCallback != null) {
+                    patternsCallback.accept(new ArrayList<>(newPatterns));
+                }
+            }
+
             // Detect removed servers/paths so they stop being watched without a restart
             List<ServerPath> removedPaths = detectRemovedPaths(newConfig);
             if (!removedPaths.isEmpty()) {
@@ -209,6 +225,13 @@ public class ConfigFileWatcher {
      */
     public void setRemovedServersCallback(Consumer<List<ServerPath>> removedServersCallback) {
         this.removedServersCallback = removedServersCallback;
+    }
+
+    /**
+     * Sets the callback notified when the file patterns in the config file change.
+     */
+    public void setFilePatternsCallback(Consumer<List<String>> filePatternsCallback) {
+        this.filePatternsCallback = filePatternsCallback;
     }
 
     /**
