@@ -85,6 +85,34 @@ public class IssueStore implements IssueRepository {
     }
     
     /**
+     * Records repeated occurrences of an existing issue.
+     */
+    @Override
+    public void recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt) {
+        if (additionalOccurrences <= 0) {
+            return;
+        }
+        Optional<LogIssue> found = getIssueById(issueId);
+        if (found.isEmpty()) {
+            return;
+        }
+        LogIssue issue = found.get();
+        int count;
+        synchronized (issue) {
+            issue.setOccurrenceCount(issue.getOccurrenceCount() + additionalOccurrences);
+            issue.setLastSeenAt(lastSeenAt);
+            count = issue.getOccurrenceCount();
+        }
+        for (IssueRepository.IssueListener listener : listeners) {
+            try {
+                listener.onOccurrences(issueId, count, lastSeenAt);
+            } catch (Exception e) {
+                System.err.println("Error notifying listener: " + e.getMessage());
+            }
+        }
+    }
+
+    /**
      * Adds a listener for new issues (for WebSocket or SSE).
      * Returns false if max listeners limit reached.
      */

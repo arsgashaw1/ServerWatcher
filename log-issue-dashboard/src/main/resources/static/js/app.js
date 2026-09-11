@@ -195,6 +195,10 @@ class LogDashboard {
         this.eventSource.addEventListener('issue', (e) => {
             this.queueIssue(JSON.parse(e.data));
         });
+
+        this.eventSource.addEventListener('occurrences', (e) => {
+            this.updateOccurrences(JSON.parse(e.data));
+        });
         
         this.eventSource.addEventListener('stats', (e) => {
             const stats = JSON.parse(e.data);
@@ -436,6 +440,26 @@ class LogDashboard {
         batch.forEach(issue => this.addIssue(issue, true));
     }
 
+    /**
+     * Applies a repeat-count update to an issue that is shown or about to be shown.
+     */
+    updateOccurrences(update) {
+        const issue = this.issues.find(i => i.id === update.id)
+            || this.pendingIssues.find(i => i.id === update.id);
+        if (!issue) return;
+
+        issue.occurrenceCount = update.occurrenceCount;
+        issue.lastSeenAt = update.lastSeenAt;
+
+        const el = document.querySelector(`#issuesList .issue-item[data-id="${CSS.escape(update.id)}"]`);
+        if (el) {
+            el.replaceWith(this.createIssueElement(issue));
+        }
+        if (this.selectedIssue && this.selectedIssue.id === update.id) {
+            this.showIssueDetail(update.id);
+        }
+    }
+
     addIssue(issue, isNew = false) {
         // Always update total count (global count regardless of filters)
         this.pagination.total++;
@@ -560,7 +584,10 @@ class LogDashboard {
         el.innerHTML = `
             <div class="issue-header">
                 <span class="issue-type">${this.escapeHtml(issue.issueType)}</span>
-                <span class="issue-badge badge-${issue.severity}">${issue.severity}</span>
+                <span class="issue-badges">
+                    ${issue.occurrenceCount > 1 ? `<span class="issue-occurrences" title="Seen ${issue.occurrenceCount} times, last at ${this.escapeHtml(issue.lastSeenAt)}">×${issue.occurrenceCount}</span>` : ''}
+                    <span class="issue-badge badge-${issue.severity}">${issue.severity}</span>
+                </span>
             </div>
             <div class="issue-message">${this.escapeHtml(issue.message)}</div>
             <div class="issue-footer">
@@ -598,6 +625,10 @@ class LogDashboard {
             <div class="detail-row">
                 <div class="detail-label">Detected At</div>
                 <div class="detail-value">${issue.detectedAt}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Occurrences</div>
+                <div class="detail-value">${issue.occurrenceCount || 1}${issue.occurrenceCount > 1 ? ` (last seen ${this.escapeHtml(issue.lastSeenAt)})` : ''}</div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">Message</div>

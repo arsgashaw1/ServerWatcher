@@ -184,6 +184,8 @@ public class LogDashboardApp {
             issueStore::addIssue,
             status -> System.out.println("[Watcher] " + status)
         );
+        // Repeats suppressed by deduplication increase the original issue's occurrence count
+        logWatcher.setRepeatListener(issueStore::recordOccurrences);
         
         // Create the dump processing watcher (if store is available)
         if (dumpProcessingStore != null) {

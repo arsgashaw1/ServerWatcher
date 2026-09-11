@@ -62,6 +62,7 @@ public class LogFileWatcher {
 
     private volatile boolean running;
     private volatile boolean verboseLogging = false;
+    private volatile LogParser.RepeatListener repeatListener;
 
     // Poll statistics (written by the watcher thread, read by diagnostics)
     private volatile long lastPollAt;
@@ -600,7 +601,8 @@ public class LogFileWatcher {
             }
         }
 
-        List<LogIssue> issues = parser.parseLines(tf.serverName, fileName, result.lines, firstLineNumber);
+        LogParser.ParseResult parsed = parser.parse(tf.serverName, fileName, result.lines, firstLineNumber);
+        List<LogIssue> issues = parsed.issues;
 
         if (verboseLogging && issues.isEmpty()) {
             updateStatus("No issues detected in " + result.lines.size() + " lines from " + fileName + serverInfo);
@@ -610,6 +612,14 @@ public class LogFileWatcher {
 
         for (LogIssue issue : issues) {
             issueCallback.accept(issue);
+        }
+
+        // Applied after new issues are stored, since repeats may refer to them
+        LogParser.RepeatListener listener = repeatListener;
+        if (listener != null) {
+            for (LogParser.Repeat repeat : parsed.repeats) {
+                listener.onRepeat(repeat.issueId, repeat.count, repeat.lastSeenAt);
+            }
         }
     }
 
@@ -825,6 +835,13 @@ public class LogFileWatcher {
         } catch (ExecutionException e) {
             // Already reported inside the task
         }
+    }
+
+    /**
+     * Sets the listener that receives repeat counts for issues suppressed by deduplication.
+     */
+    public void setRepeatListener(LogParser.RepeatListener repeatListener) {
+        this.repeatListener = repeatListener;
     }
 
     /**

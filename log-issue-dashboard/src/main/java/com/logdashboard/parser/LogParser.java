@@ -7,6 +7,7 @@ import com.logdashboard.config.DashboardConfig;
 import com.logdashboard.model.LogIssue;
 import com.logdashboard.model.LogIssue.Severity;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -34,7 +35,7 @@ public class LogParser {
     private final List<CustomRule> customRules;
     
     // Deduplication cache: fingerprint -> last seen timestamp
-    private final Map<String, Long> recentIssueFingerprints = new ConcurrentHashMap<>();
+    private final Map<String, RecentIssue> recentIssueFingerprints = new ConcurrentHashMap<>();
     private static final long DEDUP_WINDOW_MS = 5000; // 5 second window for deduplication
     
     // Pattern to detect stack trace elements
@@ -326,7 +327,7 @@ public class LogParser {
                 try {
                     Thread.sleep(30000);
                     long cutoff = System.currentTimeMillis() - (DEDUP_WINDOW_MS * 2);
-                    recentIssueFingerprints.entrySet().removeIf(e -> e.getValue() < cutoff);
+                    recentIssueFingerprints.entrySet().removeIf(e -> e.getValue().lastSeen < cutoff);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
@@ -342,7 +343,17 @@ public class LogParser {
      * Enhanced version with context capture, JSON parsing, and deduplication.
      */
     public List<LogIssue> parseLines(String serverName, String fileName, List<String> lines, int startLineNumber) {
+        return parse(serverName, fileName, lines, startLineNumber).issues;
+    }
+
+    /**
+     * Parses lines and also reports repeats of recent issues that deduplication suppressed,
+     * aggregated per original issue. Callers must store the new issues before applying the
+     * repeats, since repeats may refer to issues found in the same batch.
+     */
+    public ParseResult parse(String serverName, String fileName, List<String> lines, int startLineNumber) {
         List<LogIssue> issues = new ArrayList<>();
+        Map<String, Repeat> repeats = new LinkedHashMap<>();
         
         int lineNum = startLineNumber;
         int i = 0;
@@ -371,7 +382,7 @@ public class LogParser {
             if (parseJsonLogs && isJsonLog(line)) {
                 LogIssue jsonIssue = parseJsonLogLine(serverName, fileName, lineNum, line);
                 if (jsonIssue != null) {
-                    if (!isDuplicate(jsonIssue)) {
+                    if (!isDuplicate(jsonIssue, repeats)) {
                         issues.add(jsonIssue);
                     }
                     lineNum++;
@@ -383,7 +394,7 @@ public class LogParser {
             // Check custom rules first
             LogIssue customIssue = checkCustomRules(serverName, fileName, lineNum, line);
             if (customIssue != null) {
-                if (!isDuplicate(customIssue)) {
+                if (!isDuplicate(customIssue, repeats)) {
                     issues.add(customIssue);
                 }
                 lineNum++;
@@ -422,7 +433,7 @@ public class LogParser {
                     Severity.CRITICAL
                 );
                 
-                if (!isDuplicate(issue)) {
+                if (!isDuplicate(issue, repeats)) {
                     issues.add(issue);
                 }
                 
@@ -458,7 +469,7 @@ public class LogParser {
                     severity
                 );
                 
-                if (!isDuplicate(issue)) {
+                if (!isDuplicate(issue, repeats)) {
                     issues.add(issue);
                 }
                 
@@ -478,7 +489,7 @@ public class LogParser {
                     Severity.ERROR
                 );
                 
-                if (!isDuplicate(issue)) {
+                if (!isDuplicate(issue, repeats)) {
                     issues.add(issue);
                 }
             }
@@ -493,7 +504,7 @@ public class LogParser {
                     Severity.WARNING
                 );
                 
-                if (!isDuplicate(issue)) {
+                if (!isDuplicate(issue, repeats)) {
                     issues.add(issue);
                 }
             }
@@ -502,7 +513,11 @@ public class LogParser {
             i++;
         }
         
-        return issues;
+        LocalDateTime now = LocalDateTime.now();
+        for (Repeat repeat : repeats.values()) {
+            repeat.lastSeenAt = now;
+        }
+        return new ParseResult(issues, new ArrayList<>(repeats.values()));
     }
     
     /**
@@ -645,7 +660,7 @@ public class LogParser {
     /**
      * Check if this issue is a duplicate of a recent one.
      */
-    private boolean isDuplicate(LogIssue issue) {
+    private boolean isDuplicate(LogIssue issue, Map<String, Repeat> repeats) {
         if (!enableDeduplication) {
             return false;
         }
@@ -654,14 +669,15 @@ public class LogParser {
         String fingerprint = createFingerprint(issue);
         long now = System.currentTimeMillis();
         
-        Long lastSeen = recentIssueFingerprints.get(fingerprint);
-        if (lastSeen != null && (now - lastSeen) < DEDUP_WINDOW_MS) {
-            // Update timestamp but consider it a duplicate
-            recentIssueFingerprints.put(fingerprint, now);
+        RecentIssue recent = recentIssueFingerprints.get(fingerprint);
+        if (recent != null && (now - recent.lastSeen) < DEDUP_WINDOW_MS) {
+            // Update timestamp but consider it a duplicate, counted against the original issue
+            recent.lastSeen = now;
+            repeats.computeIfAbsent(recent.issueId, Repeat::new).count++;
             return true;
         }
         
-        recentIssueFingerprints.put(fingerprint, now);
+        recentIssueFingerprints.put(fingerprint, new RecentIssue(issue.getId(), now));
         return false;
     }
     
@@ -982,6 +998,50 @@ public class LogParser {
     /**
      * Custom rule definition.
      */
+    /**
+     * Issues found in a batch of lines, plus repeats of previously reported issues.
+     */
+    public static final class ParseResult {
+        public final List<LogIssue> issues;
+        public final List<Repeat> repeats;
+
+        ParseResult(List<LogIssue> issues, List<Repeat> repeats) {
+            this.issues = issues;
+            this.repeats = repeats;
+        }
+    }
+
+    /**
+     * Additional occurrences of an already reported issue.
+     */
+    public static final class Repeat {
+        public final String issueId;
+        public int count;
+        public LocalDateTime lastSeenAt;
+
+        Repeat(String issueId) {
+            this.issueId = issueId;
+        }
+    }
+
+    /**
+     * Receives repeat counts for previously reported issues.
+     */
+    public interface RepeatListener {
+        void onRepeat(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt);
+    }
+
+    /** The issue a deduplication fingerprint was first reported as. */
+    private static final class RecentIssue {
+        final String issueId;
+        volatile long lastSeen;
+
+        RecentIssue(String issueId, long lastSeen) {
+            this.issueId = issueId;
+            this.lastSeen = lastSeen;
+        }
+    }
+
     private static class CustomRule {
         String name;
         Pattern pattern;

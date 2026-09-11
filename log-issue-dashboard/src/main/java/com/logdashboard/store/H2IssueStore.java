@@ -157,6 +157,52 @@ public class H2IssueStore implements IssueRepository {
             System.err.println("Error adding issue to database: " + e.getMessage());
         }
     }
+
+    /**
+     * Records repeated occurrences of an existing issue. The parser aggregates repeats,
+     * so this runs at most once per distinct issue per poll, not once per log line.
+     */
+    @Override
+    public void recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt) {
+        if (additionalOccurrences <= 0) {
+            return;
+        }
+        try {
+            Connection conn = dbManager.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "UPDATE log_issues SET occurrence_count = COALESCE(occurrence_count, 1) + ?, " +
+                    "last_seen_at = ? WHERE id = ?")) {
+                stmt.setInt(1, additionalOccurrences);
+                stmt.setTimestamp(2, Timestamp.valueOf(lastSeenAt));
+                stmt.setString(3, issueId);
+                if (stmt.executeUpdate() == 0) {
+                    return;  // Issue was trimmed or cleared
+                }
+            }
+
+            int count;
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT occurrence_count FROM log_issues WHERE id = ?")) {
+                stmt.setString(1, issueId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (!rs.next()) {
+                        return;
+                    }
+                    count = rs.getInt(1);
+                }
+            }
+
+            for (IssueRepository.IssueListener listener : listeners) {
+                try {
+                    listener.onOccurrences(issueId, count, lastSeenAt);
+                } catch (Exception e) {
+                    System.err.println("Error notifying listener: " + e.getMessage());
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error recording occurrences: " + e.getMessage());
+        }
+    }
     
     /**
      * Trims old issues when max limit is exceeded.
@@ -875,6 +921,11 @@ public class H2IssueStore implements IssueRepository {
                                        message, stackTrace, severity, 
                                        detectedAt.toLocalDateTime(), id);
         issue.setAcknowledged(acknowledged);
+        issue.setOccurrenceCount(rs.getInt("occurrence_count"));
+        Timestamp lastSeen = rs.getTimestamp("last_seen_at");
+        if (lastSeen != null) {
+            issue.setLastSeenAt(lastSeen.toLocalDateTime());
+        }
         return issue;
     }
     

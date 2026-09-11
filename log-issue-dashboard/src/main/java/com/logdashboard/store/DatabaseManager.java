@@ -133,6 +133,10 @@ public class DatabaseManager {
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                 ")");
             
+            // Occurrence tracking for deduplicated repeats (added in place for existing databases)
+            stmt.execute("ALTER TABLE log_issues ADD COLUMN IF NOT EXISTS occurrence_count INT DEFAULT 1");
+            stmt.execute("ALTER TABLE log_issues ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP");
+
             // Create indexes for common query patterns
             stmt.execute(
                 "CREATE INDEX IF NOT EXISTS idx_issues_detected_at " +

@@ -19,6 +19,8 @@ public class LogIssue {
     private final LocalDateTime detectedAt;
     private final Severity severity;
     private boolean acknowledged;
+    private int occurrenceCount = 1;       // Includes repeats suppressed by deduplication
+    private LocalDateTime lastSeenAt;      // Most recent occurrence; null means detectedAt
 
     public enum Severity {
         ERROR("Error", "#FF4444"),
@@ -133,6 +135,26 @@ public class LogIssue {
 
     public void setAcknowledged(boolean acknowledged) {
         this.acknowledged = acknowledged;
+    }
+
+    public int getOccurrenceCount() {
+        return occurrenceCount;
+    }
+
+    public void setOccurrenceCount(int occurrenceCount) {
+        this.occurrenceCount = Math.max(1, occurrenceCount);
+    }
+
+    public LocalDateTime getLastSeenAt() {
+        return lastSeenAt != null ? lastSeenAt : detectedAt;
+    }
+
+    public void setLastSeenAt(LocalDateTime lastSeenAt) {
+        this.lastSeenAt = lastSeenAt;
+    }
+
+    public String getFormattedLastSeen() {
+        return getLastSeenAt().format(FORMATTER);
     }
 
     @Override

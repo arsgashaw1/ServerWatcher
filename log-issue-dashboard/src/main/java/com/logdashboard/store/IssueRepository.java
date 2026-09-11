@@ -23,12 +23,24 @@ public interface IssueRepository {
      */
     interface IssueListener {
         void onNewIssue(LogIssue issue);
+
+        /**
+         * Called when repeats of an existing issue were recorded.
+         */
+        default void onOccurrences(String issueId, int occurrenceCount, LocalDateTime lastSeenAt) {
+        }
     }
-    
+
     /**
      * Adds a new issue to the store.
      */
     void addIssue(LogIssue issue);
+
+    /**
+     * Adds repeated occurrences (duplicates suppressed by the parser) to an existing issue.
+     * Does nothing if the issue no longer exists.
+     */
+    void recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt);
     
     /**
      * Adds a listener for new issues.

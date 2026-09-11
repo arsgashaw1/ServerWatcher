@@ -72,7 +72,22 @@ public class EventStreamServlet extends HttpServlet {
 
         // Register listener for new issues. Broadcasting runs on the dispatcher thread so a
         // slow or stalled browser connection never blocks the log file watcher.
-        issueStore.addListener(issue -> dispatch(() -> broadcastIssue(issue)));
+        issueStore.addListener(new IssueRepository.IssueListener() {
+            @Override
+            public void onNewIssue(LogIssue issue) {
+                dispatch(() -> broadcastIssue(issue));
+            }
+
+            @Override
+            public void onOccurrences(String issueId, int occurrenceCount, LocalDateTime lastSeenAt) {
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("id", issueId);
+                data.put("occurrenceCount", occurrenceCount);
+                data.put("lastSeenAt", lastSeenAt.format(LAST_SEEN_FORMATTER));
+                String json = GSON.toJson(data);
+                dispatch(() -> broadcastEvent("occurrences", json));
+            }
+        });
 
         // Periodic heartbeat keeps connections alive through proxies and detects dead
         // clients, which would otherwise hold one of the limited SSE slots indefinitely
@@ -88,10 +103,20 @@ public class EventStreamServlet extends HttpServlet {
         }
     }
 
-    /**
-     * Sends an SSE comment to every client and removes clients that fail.
-     */
+    private static final DateTimeFormatter LAST_SEEN_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
     private void sendHeartbeat() {
+        sendToAll(": heartbeat\n\n");
+    }
+
+    private void broadcastEvent(String eventName, String jsonData) {
+        sendToAll("event: " + eventName + "\ndata: " + jsonData + "\n\n");
+    }
+
+    /**
+     * Writes a raw SSE payload to every client and removes clients that fail.
+     */
+    private void sendToAll(String payload) {
         List<AsyncContext> failedClients = new ArrayList<>();
         for (AsyncContext client : clients) {
             ReentrantLock lock = clientLocks.get(client);
@@ -101,7 +126,7 @@ public class EventStreamServlet extends HttpServlet {
             lock.lock();
             try {
                 PrintWriter out = client.getResponse().getWriter();
-                out.write(": heartbeat\n\n");
+                out.write(payload);
                 out.flush();
                 if (out.checkError()) {
                     failedClients.add(client);
@@ -366,6 +391,8 @@ public class EventStreamServlet extends HttpServlet {
         map.put("severity", issue.getSeverity().name());
         map.put("severityColor", issue.getSeverity().getColor());
         map.put("acknowledged", issue.isAcknowledged());
+        map.put("occurrenceCount", issue.getOccurrenceCount());
+        map.put("lastSeenAt", issue.getFormattedLastSeen());
         return map;
     }
     

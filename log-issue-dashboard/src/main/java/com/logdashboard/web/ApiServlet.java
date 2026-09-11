@@ -575,6 +575,8 @@ public class ApiServlet extends HttpServlet {
         map.put("severity", issue.getSeverity().name());
         map.put("severityColor", issue.getSeverity().getColor());
         map.put("acknowledged", issue.isAcknowledged());
+        map.put("occurrenceCount", issue.getOccurrenceCount());
+        map.put("lastSeenAt", issue.getFormattedLastSeen());
         return map;
     }
     
