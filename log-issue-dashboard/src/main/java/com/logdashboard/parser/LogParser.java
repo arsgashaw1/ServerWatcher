@@ -26,11 +26,11 @@ import java.util.regex.Pattern;
  */
 public class LogParser {
     
-    private final List<Pattern> exceptionPatterns;
-    private final List<Pattern> errorPatterns;
-    private final List<Pattern> warningPatterns;
-    private final List<Pattern> exclusionPatterns;
-    private final List<Pattern> criticalPatterns;
+    private final PatternSet exceptionPatterns;
+    private final PatternSet errorPatterns;     // Configured + built-in error patterns
+    private final PatternSet warningPatterns;   // Configured + built-in warning patterns
+    private final PatternSet exclusionPatterns;
+    private final PatternSet criticalPatterns;
     private final List<CustomRule> customRules;
     
     // Deduplication cache: fingerprint -> last seen timestamp
@@ -61,9 +61,8 @@ public class LogParser {
     private static final Pattern TIMESTAMP_PATTERN =
         Pattern.compile("^\\d{4}[-/]\\d{2}[-/]\\d{2}[T\\s]\\d{2}:\\d{2}");
 
-    // Pattern to extract exception class names (precompiled; used for every detected issue)
-    private static final Pattern EXCEPTION_TYPE_PATTERN =
-        Pattern.compile("([\\w.$]+(?:Exception|Error|Throwable))");
+    // Class name suffixes recognized when extracting exception types
+    private static final String[] EXCEPTION_SUFFIXES = {"Exception", "Error", "Throwable"};
 
     // Patterns used to normalize messages for deduplication fingerprints
     private static final Pattern FP_DATE = Pattern.compile("\\d{4}[-/]\\d{2}[-/]\\d{2}");
@@ -202,19 +201,17 @@ public class LogParser {
     private final boolean parseJsonLogs;
     
     public LogParser(DashboardConfig config) {
-        this.exceptionPatterns = compilePatterns(config.getExceptionPatterns());
-        this.errorPatterns = compilePatterns(config.getErrorPatterns());
-        this.warningPatterns = compilePatterns(config.getWarningPatterns());
-        this.exclusionPatterns = compilePatterns(
-            config.getExclusionPatterns() != null ? config.getExclusionPatterns() : new ArrayList<>()
-        );
+        this.exceptionPatterns = PatternSet.of(compilePatterns(config.getExceptionPatterns()));
+        this.errorPatterns = PatternSet.of(compilePatterns(config.getErrorPatterns()), BUILTIN_ERROR_PATTERNS);
+        this.warningPatterns = PatternSet.of(compilePatterns(config.getWarningPatterns()), BUILTIN_WARNING_PATTERNS);
+        this.exclusionPatterns = PatternSet.of(compilePatterns(config.getExclusionPatterns()));
         
         // Compile critical patterns from config or use defaults
         List<String> configCriticalPatterns = config.getCriticalPatterns();
         if (configCriticalPatterns != null && !configCriticalPatterns.isEmpty()) {
-            this.criticalPatterns = compilePatterns(configCriticalPatterns);
+            this.criticalPatterns = PatternSet.of(compilePatterns(configCriticalPatterns));
         } else {
-            this.criticalPatterns = new ArrayList<>(BUILTIN_CRITICAL_PATTERNS);
+            this.criticalPatterns = PatternSet.of(BUILTIN_CRITICAL_PATTERNS);
         }
         
         // Load custom rules from config
@@ -360,8 +357,11 @@ public class LogParser {
                 continue;
             }
             
+            // Lowercased once per line for the literal prefilters of every pattern set
+            String lowerLine = asciiLowerCase(line);
+
             // Check exclusion patterns first - skip false positives
-            if (matchesAny(line, exclusionPatterns)) {
+            if (exclusionPatterns.matchesAny(line, lowerLine)) {
                 lineNum++;
                 i++;
                 continue;
@@ -392,7 +392,7 @@ public class LogParser {
             }
             
             // Check for CRITICAL patterns (highest priority)
-            if (matchesAny(line, criticalPatterns)) {
+            if (criticalPatterns.matchesAny(line, lowerLine)) {
                 StringBuilder context = new StringBuilder(line);
                 int issueLineNum = lineNum;
                 
@@ -432,7 +432,7 @@ public class LogParser {
             }
             
             // Check for exception patterns
-            if (matchesAny(line, exceptionPatterns)) {
+            if (exceptionPatterns.matchesAny(line, lowerLine)) {
                 StringBuilder stackTrace = new StringBuilder(line);
                 int exceptionLineNum = lineNum;
                 
@@ -468,7 +468,7 @@ public class LogParser {
             }
             
             // Check for error patterns (including built-in)
-            if (matchesAny(line, errorPatterns) || matchesAny(line, BUILTIN_ERROR_PATTERNS)) {
+            if (errorPatterns.matchesAny(line, lowerLine)) {
                 String message = line.trim();
                 String issueType = extractIssueType(line, "ERROR");
                 
@@ -483,7 +483,7 @@ public class LogParser {
                 }
             }
             // Check for warning patterns (including built-in)
-            else if (matchesAny(line, warningPatterns) || matchesAny(line, BUILTIN_WARNING_PATTERNS)) {
+            else if (warningPatterns.matchesAny(line, lowerLine)) {
                 String message = line.trim();
                 String issueType = extractIssueType(line, "WARNING");
                 
@@ -692,13 +692,192 @@ public class LogParser {
         return parseLines(null, fileName, lines, startLineNumber);
     }
     
-    private boolean matchesAny(String line, List<Pattern> patterns) {
-        for (Pattern pattern : patterns) {
-            if (pattern.matcher(line).find()) {
-                return true;
+    /**
+     * A group of patterns checked with find(), each paired with the literal substrings any
+     * match must contain. A cheap indexOf on the lowercased line rules out most patterns
+     * before the regex engine runs - important because nearly every log line is noise that
+     * would otherwise be scanned position-by-position by ~90 regexes.
+     */
+    private static final class PatternSet {
+        private final Pattern[] patterns;
+        private final String[][] requiredLiterals;
+
+        @SafeVarargs
+        static PatternSet of(List<Pattern>... groups) {
+            List<Pattern> all = new ArrayList<>();
+            for (List<Pattern> group : groups) {
+                all.addAll(group);
+            }
+            return new PatternSet(all);
+        }
+
+        private PatternSet(List<Pattern> patterns) {
+            this.patterns = patterns.toArray(new Pattern[0]);
+            this.requiredLiterals = new String[this.patterns.length][];
+            for (int i = 0; i < this.patterns.length; i++) {
+                requiredLiterals[i] = requiredLiterals(this.patterns[i].pattern());
             }
         }
-        return false;
+
+        boolean matchesAny(String line, String lowerLine) {
+            for (int i = 0; i < patterns.length; i++) {
+                String[] literals = requiredLiterals[i];
+                if (literals != null && !containsAll(lowerLine, literals)) {
+                    continue;
+                }
+                if (patterns[i].matcher(line).find()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static boolean containsAll(String text, String[] literals) {
+            for (String literal : literals) {
+                if (text.indexOf(literal) < 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Extracts lowercase ASCII literal runs (length >= 2) that every match of the regex must
+     * contain. Returns null when the expression uses constructs this conservative scanner does
+     * not model (groups, alternation, unusual escapes), in which case no prefilter is applied.
+     * Only ASCII is used so that ASCII lowercasing of the line is an exact necessary condition
+     * for both case-sensitive and (ASCII) case-insensitive patterns.
+     */
+    static String[] requiredLiterals(String regex) {
+        List<String> literals = new ArrayList<>();
+        StringBuilder run = new StringBuilder();
+        boolean lastWasLiteral = false;
+        int length = regex.length();
+        int i = 0;
+        while (i < length) {
+            char c = regex.charAt(i);
+            switch (c) {
+                case '|':
+                case '(':
+                case ')':
+                    return null;
+                case '*':
+                case '?':
+                case '{':
+                    // The preceding literal is optional or repeated a variable number of times
+                    if (lastWasLiteral) {
+                        run.setLength(run.length() - 1);
+                    }
+                    flushLiteral(run, literals);
+                    if (c == '{') {
+                        int close = regex.indexOf('}', i);
+                        if (close < 0) {
+                            return null;
+                        }
+                        i = close;
+                    }
+                    i = skipQuantifierModifier(regex, i + 1);
+                    lastWasLiteral = false;
+                    break;
+                case '+':
+                    // At least one occurrence: the preceding literal stays required
+                    flushLiteral(run, literals);
+                    i = skipQuantifierModifier(regex, i + 1);
+                    lastWasLiteral = false;
+                    break;
+                case '[': {
+                    flushLiteral(run, literals);
+                    int j = i + 1;
+                    if (j < length && regex.charAt(j) == '^') j++;
+                    if (j < length && regex.charAt(j) == ']') j++;
+                    while (j < length && regex.charAt(j) != ']') {
+                        char classChar = regex.charAt(j);
+                        if (classChar == '[') {
+                            return null;
+                        }
+                        if (classChar == '\\') {
+                            j++;
+                        }
+                        j++;
+                    }
+                    if (j >= length) {
+                        return null;
+                    }
+                    i = j + 1;
+                    lastWasLiteral = false;
+                    break;
+                }
+                case '\\': {
+                    if (i + 1 >= length) {
+                        return null;
+                    }
+                    char escaped = regex.charAt(i + 1);
+                    if (escaped > ' ' && escaped < 128 && !Character.isLetterOrDigit(escaped)) {
+                        run.append(escaped);
+                        lastWasLiteral = true;
+                    } else if ("bBdDsSwWAzZGhHvVRtnrfae".indexOf(escaped) >= 0) {
+                        flushLiteral(run, literals);
+                        lastWasLiteral = false;
+                    } else {
+                        return null;  // Quoting, properties, hex/unicode escapes, back-references, ...
+                    }
+                    i += 2;
+                    break;
+                }
+                case '.':
+                case '^':
+                case '$':
+                case ']':
+                case '}':
+                    flushLiteral(run, literals);
+                    lastWasLiteral = false;
+                    i++;
+                    break;
+                default:
+                    if (c < 128) {
+                        run.append(c >= 'A' && c <= 'Z' ? (char) (c + 32) : c);
+                        lastWasLiteral = true;
+                    } else {
+                        flushLiteral(run, literals);
+                        lastWasLiteral = false;
+                    }
+                    i++;
+            }
+        }
+        flushLiteral(run, literals);
+        return literals.isEmpty() ? null : literals.toArray(new String[0]);
+    }
+
+    private static int skipQuantifierModifier(String regex, int index) {
+        if (index < regex.length() && (regex.charAt(index) == '?' || regex.charAt(index) == '+')) {
+            return index + 1;
+        }
+        return index;
+    }
+
+    private static void flushLiteral(StringBuilder run, List<String> literals) {
+        if (run.length() >= 2) {
+            literals.add(run.toString().toLowerCase(Locale.ROOT));
+        }
+        run.setLength(0);
+    }
+
+    /** Lowercases ASCII letters only, preserving length and all other characters. */
+    static String asciiLowerCase(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= 'A' && c <= 'Z') {
+                char[] chars = s.toCharArray();
+                for (int j = i; j < chars.length; j++) {
+                    if (chars[j] >= 'A' && chars[j] <= 'Z') {
+                        chars[j] = (char) (chars[j] + 32);
+                    }
+                }
+                return new String(chars);
+            }
+        }
+        return s;
     }
     
     private boolean isStackTraceLine(String line) {
@@ -713,14 +892,51 @@ public class LogParser {
      */
     private String extractExceptionType(String line) {
         // Try to find exception class name
-        Matcher matcher = EXCEPTION_TYPE_PATTERN.matcher(line);
-        if (matcher.find()) {
-            String fullType = matcher.group(1);
+        String fullType = findExceptionClassName(line);
+        if (fullType != null) {
             // Return just the class name without package
             int lastDot = fullType.lastIndexOf('.');
             return lastDot >= 0 ? fullType.substring(lastDot + 1) : fullType;
         }
         return "Exception";
+    }
+
+    /**
+     * Returns what {@code ([\w.$]+(?:Exception|Error|Throwable))} would find, without the
+     * regex's heavy backtracking: the first run of identifier characters that contains a
+     * suffix preceded by at least one character, cut after the last such suffix (greedy).
+     */
+    static String findExceptionClassName(String line) {
+        int length = line.length();
+        int i = 0;
+        while (i < length) {
+            if (!isTypeNameChar(line.charAt(i))) {
+                i++;
+                continue;
+            }
+            int start = i;
+            while (i < length && isTypeNameChar(line.charAt(i))) {
+                i++;
+            }
+            int bestStart = -1;
+            int bestEnd = -1;
+            for (String suffix : EXCEPTION_SUFFIXES) {
+                int index = line.lastIndexOf(suffix, i - suffix.length());
+                if (index > start && index > bestStart) {
+                    bestStart = index;
+                    bestEnd = index + suffix.length();
+                }
+            }
+            if (bestStart > 0) {
+                return line.substring(start, bestEnd);
+            }
+        }
+        return null;
+    }
+
+    private static boolean isTypeNameChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+            || c == '_' || c == '.' || c == '$';
     }
     
     /**
