@@ -28,12 +28,18 @@ class LogDashboard {
         this.pendingIssues = [];
         this.issueFlushScheduled = false;
         this.wasDisconnected = false;
+        this.baseTitle = document.title;
+        this.unseenCritical = 0;              // Critical issues that arrived while the tab was hidden
+        this.notificationsEnabled = false;
+        this.pendingCriticalNotifications = [];
+        this.notifyTimer = null;
 
         this.init();
     }
     
     init() {
         this.setupTheme();
+        this.setupNotifications();
         this.setupEventListeners();
         this.setupTabs();
         this.initCharts();
@@ -46,6 +52,7 @@ class LogDashboard {
             if (document.hidden) {
                 this.stopPolling();
             } else {
+                this.clearUnseenCritical();
                 this.loadStats();
                 this.loadAnomalies();
                 this.startPolling();
@@ -100,6 +107,7 @@ class LogDashboard {
     // Event listeners
     setupEventListeners() {
         document.getElementById('themeToggle').addEventListener('click', () => this.toggleTheme());
+        document.getElementById('notifyToggle').addEventListener('click', () => this.toggleNotifications());
         document.getElementById('refreshBtn').addEventListener('click', () => this.refresh());
         document.getElementById('clearBtn').addEventListener('click', () => this.clearAll());
         
@@ -421,6 +429,113 @@ class LogDashboard {
         }
     }
     
+    // Critical issue alerts
+
+    setupNotifications() {
+        this.notificationsEnabled = localStorage.getItem('notifyCritical') === 'true'
+            && this.notificationsSupported() && Notification.permission === 'granted';
+        this.updateNotifyButton();
+    }
+
+    notificationsSupported() {
+        // Browsers only allow notifications on HTTPS or localhost
+        return 'Notification' in window && window.isSecureContext;
+    }
+
+    async toggleNotifications() {
+        if (!this.notificationsSupported()) {
+            this.showToast('Desktop notifications need HTTPS or localhost. ' +
+                'The tab title still counts new critical issues while you are away.');
+            return;
+        }
+
+        if (this.notificationsEnabled) {
+            this.notificationsEnabled = false;
+        } else {
+            const permission = Notification.permission === 'granted'
+                ? 'granted' : await Notification.requestPermission();
+            this.notificationsEnabled = permission === 'granted';
+            if (!this.notificationsEnabled) {
+                this.showToast('Notifications are blocked for this site in your browser settings.');
+            }
+        }
+
+        localStorage.setItem('notifyCritical', String(this.notificationsEnabled));
+        this.updateNotifyButton();
+    }
+
+    updateNotifyButton() {
+        const btn = document.getElementById('notifyToggle');
+        if (!btn) return;
+        btn.textContent = this.notificationsEnabled ? '🔔' : '🔕';
+        btn.title = this.notificationsEnabled
+            ? 'Critical issue notifications are on (click to turn off)'
+            : 'Notify me about critical issues';
+    }
+
+    /**
+     * Counts critical issues in the tab title while the tab is hidden and, if enabled,
+     * shows a desktop notification. Bursts are grouped into a single notification.
+     */
+    handleCriticalAlerts(criticalIssues) {
+        if (criticalIssues.length === 0) return;
+
+        if (document.hidden) {
+            this.unseenCritical += criticalIssues.length;
+            document.title = `(${this.unseenCritical}) ${this.baseTitle}`;
+        }
+
+        if (!this.notificationsEnabled) return;
+        this.pendingCriticalNotifications.push(...criticalIssues);
+        if (!this.notifyTimer) {
+            this.notifyTimer = setTimeout(() => this.flushCriticalNotifications(), 2000);
+        }
+    }
+
+    flushCriticalNotifications() {
+        this.notifyTimer = null;
+        const issues = this.pendingCriticalNotifications;
+        this.pendingCriticalNotifications = [];
+        if (issues.length === 0 || !this.notificationsEnabled) return;
+
+        const first = issues[0];
+        const title = issues.length === 1
+            ? `Critical: ${first.issueType} on ${first.serverName || 'Unknown'}`
+            : `${issues.length} critical issues`;
+        const body = issues.length === 1
+            ? first.message
+            : issues.slice(0, 3).map(i => `${i.serverName || 'Unknown'}: ${i.issueType}`).join('\n');
+
+        try {
+            const notification = new Notification(title, { body, tag: 'sentinel-critical' });
+            notification.onclick = () => {
+                window.focus();
+                if (issues.length === 1) this.showIssueDetail(first.id);
+                notification.close();
+            };
+        } catch (error) {
+            console.warn('Could not show notification:', error);
+        }
+    }
+
+    clearUnseenCritical() {
+        this.unseenCritical = 0;
+        document.title = this.baseTitle;
+    }
+
+    showToast(message) {
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.setAttribute('role', 'status');
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        requestAnimationFrame(() => toast.classList.add('show'));
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 250);
+        }, 5000);
+    }
+
     // Issue handling
 
     /**
@@ -447,6 +562,7 @@ class LogDashboard {
         const batch = this.pendingIssues;
         this.pendingIssues = [];
         batch.forEach(issue => this.addIssue(issue, true));
+        this.handleCriticalAlerts(batch.filter(issue => issue.severity === 'CRITICAL'));
     }
 
     /**
