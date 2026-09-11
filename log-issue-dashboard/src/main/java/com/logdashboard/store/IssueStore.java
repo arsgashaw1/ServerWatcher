@@ -113,6 +113,16 @@ public class IssueStore implements IssueRepository {
     }
 
     /**
+     * Deletes issues whose most recent occurrence is before the cutoff.
+     */
+    @Override
+    public int deleteIssuesNotSeenSince(LocalDateTime cutoff) {
+        int before = issues.size();
+        issues.removeIf(issue -> issue.getLastSeenAt().isBefore(cutoff));
+        return before - issues.size();
+    }
+
+    /**
      * Adds a listener for new issues (for WebSocket or SSE).
      * Returns false if max listeners limit reached.
      */

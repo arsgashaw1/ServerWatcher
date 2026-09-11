@@ -366,9 +366,15 @@ class ConfigManager {
         document.getElementById('settingPolling').textContent = 
             (this.settings.pollingIntervalSeconds || 2) + ' seconds';
         document.getElementById('settingMaxIssues').textContent = 
-            this.settings.maxIssuesDisplayed || 500;
+            (this.settings.maxIssuesDisplayed > 0 && this.settings.maxIssuesDisplayed < 2147483647)
+                ? this.settings.maxIssuesDisplayed : 'Unlimited';
         document.getElementById('settingStorage').textContent = 
             (this.settings.storageType || 'memory').toUpperCase();
+        const retentionEl = document.getElementById('settingRetention');
+        if (retentionEl) {
+            const days = this.settings.issueRetentionDays || 0;
+            retentionEl.textContent = days > 0 ? `${days} day${days === 1 ? '' : 's'}` : 'Keep forever';
+        }
         document.getElementById('settingPort').textContent = 
             this.settings.webServerPort || 8080;
         document.getElementById('settingSound').textContent = 

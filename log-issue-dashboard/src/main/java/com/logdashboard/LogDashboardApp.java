@@ -8,6 +8,7 @@ import com.logdashboard.store.DumpProcessingStore;
 import com.logdashboard.store.H2IssueStore;
 import com.logdashboard.store.InfrastructureStore;
 import com.logdashboard.store.IssueRepository;
+import com.logdashboard.store.IssueRetentionTask;
 import com.logdashboard.store.IssueStore;
 import com.logdashboard.watcher.ConfigFileWatcher;
 import com.logdashboard.watcher.DumpProcessingWatcher;
@@ -41,6 +42,7 @@ public class LogDashboardApp {
     private static DumpProcessingStore dumpProcessingStore;
     private static DumpProcessingWatcher dumpProcessingWatcher;
     private static AnalysisService analysisService;
+    private static IssueRetentionTask retentionTask;
     private static WebServer webServer;
     private static LogFileWatcher logWatcher;
     private static ConfigFileWatcher configWatcher;
@@ -186,6 +188,12 @@ public class LogDashboardApp {
         
         // Create the analysis service
         analysisService = new AnalysisService(issueStore);
+
+        // Optional retention keeps the issue store from growing without bound
+        if (config.getIssueRetentionDays() > 0) {
+            retentionTask = new IssueRetentionTask(issueStore, config.getIssueRetentionDays(),
+                analysisService::invalidateCaches, status -> System.out.println("[Retention] " + status));
+        }
         
         // Create the log file watcher
         logWatcher = new LogFileWatcher(
@@ -234,6 +242,9 @@ public class LogDashboardApp {
             System.out.println("Shutting down...");
             logWatcher.stop();
             configWatcher.stop();
+            if (retentionTask != null) {
+                retentionTask.stop();
+            }
             if (dumpProcessingWatcher != null) {
                 dumpProcessingWatcher.stop();
             }
@@ -249,6 +260,9 @@ public class LogDashboardApp {
         // Start the watchers
         logWatcher.start();
         configWatcher.start();
+        if (retentionTask != null) {
+            retentionTask.start();
+        }
         if (dumpProcessingWatcher != null) {
             dumpProcessingWatcher.start();
             System.out.println("Dump processing watcher started.");

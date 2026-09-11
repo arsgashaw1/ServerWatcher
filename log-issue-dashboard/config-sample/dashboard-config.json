@@ -88,6 +88,8 @@
   "pollingIntervalSeconds": 2,
   "maxIssuesDisplayed": 0,
   "_maxIssuesDisplayed_comment": "Set to 0 for unlimited issues. Set a positive number to limit memory usage.",
+  "issueRetentionDays": 30,
+  "_issueRetentionDays_comment": "Delete issues not seen for this many days (checked every 6 hours). Keeps the database and statistics fast. Set to 0 to keep issues forever.",
   "enableSound": false,
   "windowTitle": "Sentinel",
   "webServerPort": 8080,

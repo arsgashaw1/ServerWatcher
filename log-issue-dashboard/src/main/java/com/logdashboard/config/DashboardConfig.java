@@ -21,6 +21,7 @@ public class DashboardConfig {
     private List<Map<String, Object>> customRules;  // Custom detection rules
     private int pollingIntervalSeconds;
     private int maxIssuesDisplayed;
+    private int issueRetentionDays;  // Delete issues not seen for this many days (0 = keep forever)
     private boolean enableSound;
     private String windowTitle;
     private int webServerPort;
@@ -71,6 +72,7 @@ public class DashboardConfig {
         this.customRules = new ArrayList<>();
         this.pollingIntervalSeconds = 2;
         this.maxIssuesDisplayed = Integer.MAX_VALUE; // No limit
+        this.issueRetentionDays = 0; // Keep issues forever unless configured
         this.enableSound = false;
         this.windowTitle = "Log Issue Dashboard";
         this.webServerPort = 8080;
@@ -205,6 +207,14 @@ public class DashboardConfig {
 
     public void setMaxIssuesDisplayed(int maxIssuesDisplayed) {
         this.maxIssuesDisplayed = maxIssuesDisplayed;
+    }
+
+    public int getIssueRetentionDays() {
+        return issueRetentionDays;
+    }
+
+    public void setIssueRetentionDays(int issueRetentionDays) {
+        this.issueRetentionDays = issueRetentionDays;
     }
 
     public boolean isEnableSound() {

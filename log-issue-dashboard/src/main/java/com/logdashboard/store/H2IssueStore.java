@@ -203,6 +203,32 @@ public class H2IssueStore implements IssueRepository {
             System.err.println("Error recording occurrences: " + e.getMessage());
         }
     }
+
+    /**
+     * Deletes issues not seen since the cutoff. Uses the most recent occurrence, so an
+     * issue that keeps recurring is kept even if it was first detected long ago.
+     */
+    @Override
+    public int deleteIssuesNotSeenSince(LocalDateTime cutoff) {
+        try {
+            Connection conn = dbManager.getConnection();
+            // detected_at <= last_seen_at, so the indexed detected_at condition narrows the scan
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "DELETE FROM log_issues WHERE detected_at < ? AND COALESCE(last_seen_at, detected_at) < ?")) {
+                Timestamp cutoffTimestamp = Timestamp.valueOf(cutoff);
+                stmt.setTimestamp(1, cutoffTimestamp);
+                stmt.setTimestamp(2, cutoffTimestamp);
+                int deleted = stmt.executeUpdate();
+                if (deleted > 0) {
+                    countersStale = true;
+                }
+                return deleted;
+            }
+        } catch (SQLException e) {
+            System.err.println("Error deleting old issues: " + e.getMessage());
+            return 0;
+        }
+    }
     
     /**
      * Trims old issues when max limit is exceeded.

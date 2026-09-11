@@ -193,6 +193,7 @@ java -jar log-issue-dashboard.jar ./config 9090
 | `exclusionPatterns` | array | (see above) | Regex patterns to exclude (false positives) |
 | `pollingIntervalSeconds` | int | `2` | How often to check for file changes |
 | `maxIssuesDisplayed` | int | `500` | Maximum issues to keep in store |
+| `issueRetentionDays` | int | `0` | Delete issues not seen for this many days (checked every 6 hours); `0` keeps issues forever |
 | `webServerPort` | int | `8080` | HTTP server port |
 | `storageType` | string | `"h2"` | Storage backend: `"h2"` (persistent) or `"memory"` |
 | `databasePath` | string | `"data/log-dashboard"` | Path to H2 database file (without extension) |

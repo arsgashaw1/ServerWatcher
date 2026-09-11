@@ -41,6 +41,13 @@ public interface IssueRepository {
      * Does nothing if the issue no longer exists.
      */
     void recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt);
+
+    /**
+     * Deletes issues whose most recent occurrence is before the cutoff (retention).
+     *
+     * @return number of issues deleted
+     */
+    int deleteIssuesNotSeenSince(LocalDateTime cutoff);
     
     /**
      * Adds a listener for new issues.

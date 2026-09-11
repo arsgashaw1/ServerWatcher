@@ -561,6 +561,7 @@ public class ConfigApiServlet extends HttpServlet {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("pollingIntervalSeconds", config.getPollingIntervalSeconds());
         result.put("maxIssuesDisplayed", config.getMaxIssuesDisplayed());
+        result.put("issueRetentionDays", config.getIssueRetentionDays());
         result.put("enableSound", config.isEnableSound());
         result.put("windowTitle", config.getWindowTitle());
         result.put("webServerPort", config.getWebServerPort());
