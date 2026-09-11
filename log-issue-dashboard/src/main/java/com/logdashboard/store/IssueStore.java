@@ -88,13 +88,13 @@ public class IssueStore implements IssueRepository {
      * Records repeated occurrences of an existing issue.
      */
     @Override
-    public void recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt) {
+    public boolean recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt) {
         if (additionalOccurrences <= 0) {
-            return;
+            return true;
         }
         Optional<LogIssue> found = getIssueById(issueId);
         if (found.isEmpty()) {
-            return;
+            return false;
         }
         LogIssue issue = found.get();
         int count;
@@ -110,6 +110,7 @@ public class IssueStore implements IssueRepository {
                 System.err.println("Error notifying listener: " + e.getMessage());
             }
         }
+        return true;
     }
 
     /**

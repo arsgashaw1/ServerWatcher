@@ -999,6 +999,15 @@ public class LogParser {
      * Custom rule definition.
      */
     /**
+     * Forgets the deduplication fingerprints of an issue that no longer exists (cleared or
+     * deleted by retention). Otherwise a continuously recurring error would keep being counted
+     * against the deleted issue and never appear again.
+     */
+    public void forgetIssue(String issueId) {
+        recentIssueFingerprints.values().removeIf(recent -> recent.issueId.equals(issueId));
+    }
+
+    /**
      * Issues found in a batch of lines, plus repeats of previously reported issues.
      */
     public static final class ParseResult {
@@ -1028,7 +1037,10 @@ public class LogParser {
      * Receives repeat counts for previously reported issues.
      */
     public interface RepeatListener {
-        void onRepeat(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt);
+        /**
+         * @return false if the original issue no longer exists
+         */
+        boolean onRepeat(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt);
     }
 
     /** The issue a deduplication fingerprint was first reported as. */

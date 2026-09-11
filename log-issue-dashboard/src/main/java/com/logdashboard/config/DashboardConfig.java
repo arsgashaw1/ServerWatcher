@@ -10,9 +10,10 @@ import java.util.Map;
  */
 public class DashboardConfig {
     
-    private List<String> watchPaths;  // Legacy: simple paths without server names
-    private List<ServerPath> servers; // New: server-based paths
-    private List<String> filePatterns;
+    // Volatile: replaced by web requests and config reloads, read by the watcher thread
+    private volatile List<String> watchPaths;  // Legacy: simple paths without server names
+    private volatile List<ServerPath> servers; // New: server-based paths
+    private volatile List<String> filePatterns;
     private List<String> exceptionPatterns;
     private List<String> errorPatterns;
     private List<String> warningPatterns;

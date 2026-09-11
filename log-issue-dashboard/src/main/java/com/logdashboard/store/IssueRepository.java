@@ -38,9 +38,10 @@ public interface IssueRepository {
 
     /**
      * Adds repeated occurrences (duplicates suppressed by the parser) to an existing issue.
-     * Does nothing if the issue no longer exists.
+     *
+     * @return false if the issue no longer exists (e.g. cleared or deleted by retention)
      */
-    void recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt);
+    boolean recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt);
 
     /**
      * Deletes issues whose most recent occurrence is before the cutoff (retention).

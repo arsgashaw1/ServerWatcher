@@ -646,7 +646,10 @@ public class LogFileWatcher {
         LogParser.RepeatListener listener = repeatListener;
         if (listener != null) {
             for (LogParser.Repeat repeat : parsed.repeats) {
-                listener.onRepeat(repeat.issueId, repeat.count, repeat.lastSeenAt);
+                if (!listener.onRepeat(repeat.issueId, repeat.count, repeat.lastSeenAt)) {
+                    // The original was cleared or deleted: report the next occurrence as a new issue
+                    parser.forgetIssue(repeat.issueId);
+                }
             }
         }
     }
@@ -1014,7 +1017,7 @@ public class LogFileWatcher {
             pathStatuses.keySet().removeAll(keys);
             updateStatus("Stopped watching " + keys.size() + " path(s); "
                 + (before - trackedFiles.size()) + " file(s) no longer tracked");
-        }, 30);
+        }, 5);  // Short wait: callers (web requests) must not hang behind a slow poll cycle
     }
 
     private List<ServerPath> serverList() {

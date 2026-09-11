@@ -163,9 +163,9 @@ public class H2IssueStore implements IssueRepository {
      * so this runs at most once per distinct issue per poll, not once per log line.
      */
     @Override
-    public void recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt) {
+    public boolean recordOccurrences(String issueId, int additionalOccurrences, LocalDateTime lastSeenAt) {
         if (additionalOccurrences <= 0) {
-            return;
+            return true;
         }
         try {
             Connection conn = dbManager.getConnection();
@@ -176,7 +176,7 @@ public class H2IssueStore implements IssueRepository {
                 stmt.setTimestamp(2, Timestamp.valueOf(lastSeenAt));
                 stmt.setString(3, issueId);
                 if (stmt.executeUpdate() == 0) {
-                    return;  // Issue was trimmed or cleared
+                    return false;  // Issue was trimmed, cleared or deleted by retention
                 }
             }
 
@@ -186,7 +186,7 @@ public class H2IssueStore implements IssueRepository {
                 stmt.setString(1, issueId);
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (!rs.next()) {
-                        return;
+                        return false;
                     }
                     count = rs.getInt(1);
                 }
@@ -199,8 +199,11 @@ public class H2IssueStore implements IssueRepository {
                     System.err.println("Error notifying listener: " + e.getMessage());
                 }
             }
+            return true;
         } catch (SQLException e) {
             System.err.println("Error recording occurrences: " + e.getMessage());
+            // Unknown outcome: keep treating the issue as existing rather than creating duplicates
+            return true;
         }
     }
 
