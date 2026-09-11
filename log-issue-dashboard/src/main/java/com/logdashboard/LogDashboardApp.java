@@ -16,6 +16,8 @@ import com.logdashboard.web.WebServer;
 
 import java.io.IOException;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Main entry point for the Log Issue Dashboard application.
@@ -134,6 +136,13 @@ public class LogDashboardApp {
     }
     
     private static void startApplication(DashboardConfig config, int port) throws Exception {
+        // Watch lists are read by the watcher thread while the Config page and config file
+        // reloads modify them, so use lists that are safe to iterate concurrently
+        config.setServers(new CopyOnWriteArrayList<>(
+            config.getServers() != null ? config.getServers() : new ArrayList<>()));
+        config.setWatchPaths(new CopyOnWriteArrayList<>(
+            config.getWatchPaths() != null ? config.getWatchPaths() : new ArrayList<>()));
+
         // Create the issue store (H2 file-based or in-memory)
         if (config.useH2Storage()) {
             System.out.println("Storage: H2 file-based database");
@@ -215,6 +224,8 @@ public class LogDashboardApp {
             logWatcher::addServerPaths,
             status -> System.out.println("[Config] " + status)
         );
+        // Paths removed from the config file stop being watched without a restart
+        configWatcher.setRemovedServersCallback(logWatcher::removeServerPaths);
         
         // Add shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

@@ -41,8 +41,6 @@ public class LogFileWatcher {
     private final Map<Path, TrackedFile> trackedFiles = new ConcurrentHashMap<>();
     private final Map<String, PathStatus> pathStatuses = new ConcurrentHashMap<>();
 
-    // Track dynamically added server paths for polling
-    private final List<ServerPath> dynamicServerPaths = new CopyOnWriteArrayList<>();
 
     // Limits
     private static final int MAX_TRACKED_FILES = 10000;
@@ -764,9 +762,7 @@ public class LogFileWatcher {
                 sources.putIfAbsent(sourceKey(null, path), new ServerPath(null, path));
             }
         }
-        List<ServerPath> servers = new ArrayList<>(snapshot(config.getServers()));
-        servers.addAll(dynamicServerPaths);
-        for (ServerPath server : servers) {
+        for (ServerPath server : snapshot(config.getServers())) {
             if (server != null && server.getPath() != null && !server.getPath().isBlank()) {
                 sources.putIfAbsent(sourceKey(server.getServerName(), server.getPath()), server);
             }
@@ -955,7 +951,58 @@ public class LogFileWatcher {
     }
 
     /**
-     * Registers a dynamic path unless it is already watched (e.g. added through the UI,
+     * Stops watching the given paths immediately: removes them from the live configuration
+     * (if still present) and drops their tracked files.
+     */
+    public void removeServerPaths(List<ServerPath> removedServers) {
+        if (removedServers == null || removedServers.isEmpty()) {
+            return;
+        }
+
+        Set<String> keys = new HashSet<>();
+        for (ServerPath removed : removedServers) {
+            if (removed == null || removed.getPath() == null) {
+                continue;
+            }
+            String key = sourceKey(removed.getServerName(), removed.getPath());
+            keys.add(key);
+            if (config.getServers() != null) {
+                config.getServers().removeIf(s -> s != null && s.getPath() != null
+                    && key.equals(sourceKey(s.getServerName(), s.getPath())));
+            }
+            if (removed.getServerName() == null && config.getWatchPaths() != null) {
+                config.getWatchPaths().removeIf(p -> p != null && key.equals(sourceKey(null, p)));
+            }
+        }
+        if (keys.isEmpty()) {
+            return;
+        }
+
+        runOnWatcherThread("removal of watch path(s)", () -> {
+            int before = trackedFiles.size();
+            trackedFiles.values().removeIf(tf -> keys.contains(tf.sourceKey));
+            pathStatuses.keySet().removeAll(keys);
+            updateStatus("Stopped watching " + keys.size() + " path(s); "
+                + (before - trackedFiles.size()) + " file(s) no longer tracked");
+        }, 30);
+    }
+
+    private List<ServerPath> serverList() {
+        if (config.getServers() == null) {
+            config.setServers(new CopyOnWriteArrayList<>());
+        }
+        return config.getServers();
+    }
+
+    private List<String> watchPathList() {
+        if (config.getWatchPaths() == null) {
+            config.setWatchPaths(new CopyOnWriteArrayList<>());
+        }
+        return config.getWatchPaths();
+    }
+
+    /**
+     * Adds a path to the live configuration unless it is already watched (e.g. added through the UI,
      * which also updates the config and triggers the config file watcher).
      *
      * @return true if the path needs an initial scan
@@ -970,7 +1017,12 @@ public class LogFileWatcher {
             }
         }
         if (!alreadyActive) {
-            dynamicServerPaths.add(server);
+            // Add to the live configuration so the path is listed (and removable) on the Config page
+            if (server.getServerName() == null) {
+                watchPathList().add(server.getPath());
+            } else {
+                serverList().add(server);
+            }
             String encodingInfo = server.getEncoding() != null ? " (" + server.getEncoding() + ")" : "";
             updateStatus("Adding new server path: " + server.getPath() + serverInfo(server.getServerName()) + encodingInfo);
         }
@@ -1045,8 +1097,7 @@ public class LogFileWatcher {
             Map<String, Object> pathInfo = new LinkedHashMap<>();
             pathInfo.put("path", source.getPath());
             pathInfo.put("serverName", source.getServerName());
-            pathInfo.put("type", dynamicServerPaths.contains(source) ? "dynamic"
-                : source.getServerName() != null ? "server" : "legacy");
+            pathInfo.put("type", source.getServerName() != null ? "server" : "legacy");
             pathInfo.put("encoding", source.getEncoding());
             PathStatus status = pathStatuses.get(sourceKey(source.getServerName(), source.getPath()));
             if (status != null) {

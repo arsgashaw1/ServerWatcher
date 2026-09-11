@@ -765,7 +765,7 @@ class ConfigManager {
     confirmRemoveDirectory(serverName) {
         document.getElementById('confirmMessage').textContent = 
             `Are you sure you want to remove the watch directory "${serverName}"? ` +
-            `This will stop monitoring files in that directory after restart.`;
+            `Files in that directory will stop being monitored immediately.`;
         
         this.pendingDeleteAction = () => this.removeDirectory(serverName);
         document.getElementById('confirmModal').classList.add('active');

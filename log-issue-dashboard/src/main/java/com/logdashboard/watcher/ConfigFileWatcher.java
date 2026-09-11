@@ -22,7 +22,10 @@ public class ConfigFileWatcher {
     private final ScheduledExecutorService scheduler;
     
     private volatile boolean running;
-    private Set<String> knownServerKeys;
+    private Map<String, ServerPath> knownServers;
+    private volatile Consumer<List<ServerPath>> removedServersCallback;
+    // Removals seen on the previous read; applied only if the next read confirms them
+    private Set<String> pendingRemovalKeys = Collections.emptySet();
     private Set<String> knownWatchPaths;
     private long lastModifiedTime;
     
@@ -41,12 +44,12 @@ public class ConfigFileWatcher {
         this.running = false;
         
         // Initialize known servers and paths from initial config
-        this.knownServerKeys = new HashSet<>();
+        this.knownServers = new LinkedHashMap<>();
         this.knownWatchPaths = new HashSet<>();
         
         if (initialConfig.getServers() != null) {
             for (ServerPath server : initialConfig.getServers()) {
-                knownServerKeys.add(getServerKey(server));
+                knownServers.put(getServerKey(server), server);
             }
         }
         
@@ -127,6 +130,9 @@ public class ConfigFileWatcher {
                 lastModifiedTime = currentModifiedTime;
                 updateStatus("Configuration file changed, reloading...");
                 reloadConfig();
+            } else if (!pendingRemovalKeys.isEmpty()) {
+                // Re-read to confirm pending removals
+                reloadConfig();
             }
         } catch (Exception e) {
             // Catch everything (e.g. malformed JSON while the file is being edited):
@@ -141,14 +147,19 @@ public class ConfigFileWatcher {
     private void reloadConfig() {
         try {
             DashboardConfig newConfig = configLoader.loadConfig();
+            if (newConfig == null) {
+                // Empty file, e.g. an editor truncated it before writing the new content
+                updateStatus("Configuration file is empty; keeping current configuration");
+                return;
+            }
             List<ServerPath> newServers = new ArrayList<>();
             
             // Check for new server-based paths
             if (newConfig.getServers() != null) {
                 for (ServerPath server : newConfig.getServers()) {
                     String key = getServerKey(server);
-                    if (!knownServerKeys.contains(key)) {
-                        knownServerKeys.add(key);
+                    if (!knownServers.containsKey(key)) {
+                        knownServers.put(key, server);
                         newServers.add(server);
                         updateStatus("New server detected: " + server.getServerName() + " -> " + server.getPath());
                     }
@@ -167,6 +178,18 @@ public class ConfigFileWatcher {
                 }
             }
             
+            // Detect removed servers/paths so they stop being watched without a restart
+            List<ServerPath> removedPaths = detectRemovedPaths(newConfig);
+            if (!removedPaths.isEmpty()) {
+                for (ServerPath removed : removedPaths) {
+                    updateStatus("Watch path removed from configuration: " + removed);
+                }
+                Consumer<List<ServerPath>> callback = removedServersCallback;
+                if (callback != null) {
+                    callback.accept(removedPaths);
+                }
+            }
+
             // Notify callback if there are new servers
             if (!newServers.isEmpty()) {
                 updateStatus("Added " + newServers.size() + " new server(s)/path(s)");
@@ -181,6 +204,63 @@ public class ConfigFileWatcher {
         }
     }
     
+    /**
+     * Sets the callback notified when servers or watch paths are removed from the config file.
+     */
+    public void setRemovedServersCallback(Consumer<List<ServerPath>> removedServersCallback) {
+        this.removedServersCallback = removedServersCallback;
+    }
+
+    /**
+     * Returns known servers/paths missing from the new configuration. A removal is only
+     * reported once two consecutive reads agree, so a partially written file can never
+     * make the dashboard stop watching paths.
+     */
+    private List<ServerPath> detectRemovedPaths(DashboardConfig newConfig) {
+        Set<String> currentServerKeys = new HashSet<>();
+        if (newConfig.getServers() != null) {
+            for (ServerPath server : newConfig.getServers()) {
+                currentServerKeys.add(getServerKey(server));
+            }
+        }
+        Set<String> currentWatchPaths = newConfig.getWatchPaths() != null
+            ? new HashSet<>(newConfig.getWatchPaths()) : Collections.emptySet();
+
+        Set<String> removalKeys = new LinkedHashSet<>();
+        for (String key : knownServers.keySet()) {
+            if (!currentServerKeys.contains(key)) {
+                removalKeys.add("S:" + key);
+            }
+        }
+        for (String path : knownWatchPaths) {
+            if (!currentWatchPaths.contains(path)) {
+                removalKeys.add("P:" + path);
+            }
+        }
+
+        if (removalKeys.isEmpty()) {
+            pendingRemovalKeys = Collections.emptySet();
+            return Collections.emptyList();
+        }
+        if (!removalKeys.equals(pendingRemovalKeys)) {
+            pendingRemovalKeys = removalKeys;
+            return Collections.emptyList();
+        }
+
+        pendingRemovalKeys = Collections.emptySet();
+        List<ServerPath> removed = new ArrayList<>();
+        for (String removalKey : removalKeys) {
+            String value = removalKey.substring(2);
+            if (removalKey.startsWith("S:")) {
+                removed.add(knownServers.remove(value));
+            } else {
+                knownWatchPaths.remove(value);
+                removed.add(new ServerPath(null, value));
+            }
+        }
+        return removed;
+    }
+
     private void updateStatus(String status) {
         if (statusCallback != null) {
             statusCallback.accept(status);
@@ -193,7 +273,7 @@ public class ConfigFileWatcher {
      * Returns the set of known server keys.
      */
     public Set<String> getKnownServerKeys() {
-        return new HashSet<>(knownServerKeys);
+        return new HashSet<>(knownServers.keySet());
     }
     
     /**

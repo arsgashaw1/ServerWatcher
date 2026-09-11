@@ -763,14 +763,16 @@ public class ConfigApiServlet extends HttpServlet {
         
         // Find and remove the server
         boolean found = false;
+        ServerPath removedServer = null;
         if (config.getServers() != null) {
-            for (Iterator<ServerPath> it = config.getServers().iterator(); it.hasNext();) {
-                ServerPath server = it.next();
+            for (ServerPath server : config.getServers()) {
                 if (serverName.equals(server.getServerName())) {
                     // Backup config before changes
                     backupConfig();
                     
-                    it.remove();
+                    // Remove by object (not iterator) so thread-safe copy-on-write lists work
+                    config.getServers().remove(server);
+                    removedServer = server;
                     found = true;
                     break;
                 }
@@ -792,12 +794,14 @@ public class ConfigApiServlet extends HttpServlet {
             return;
         }
         
-        // Note: Files are still being watched until next rescan
-        // A full restart would be needed to stop watching removed directories
+        // Stop watching the directory immediately
+        if (logWatcher != null && removedServer != null) {
+            logWatcher.removeServerPaths(Collections.singletonList(removedServer));
+        }
         
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
-        result.put("message", "Watch directory removed. Changes will take effect on next restart.");
+        result.put("message", "Watch directory removed and no longer monitored.");
         
         out.write(GSON.toJson(result));
     }
