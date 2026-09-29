@@ -1073,6 +1073,21 @@ class LogDashboard {
     
     // Charts
     initCharts() {
+        // Chart.js comes from a CDN. Servers without internet access cannot load it; the rest
+        // of the dashboard (live issues, stats, filters) must keep working without charts.
+        if (typeof Chart === 'undefined') {
+            console.warn('Chart.js not available; charts disabled');
+            ['trendChart', 'severityChart', 'serverChart'].forEach(id => {
+                const canvas = document.getElementById(id);
+                if (!canvas) return;
+                const note = document.createElement('div');
+                note.className = 'empty-state small';
+                note.innerHTML = '<p>Chart unavailable</p><p class="empty-hint">Chart library could not be loaded (no internet access?)</p>';
+                canvas.replaceWith(note);
+            });
+            return;
+        }
+
         const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
         const textColor = isDark ? '#94a3b8' : '#64748b';
         const gridColor = isDark ? '#334155' : '#e2e8f0';
@@ -1162,6 +1177,8 @@ class LogDashboard {
     }
     
     updateCharts(stats) {
+        if (!this.charts.trend) return;  // Charts disabled
+
         // Update trend chart
         if (stats.recentTrend) {
             this.charts.trend.data.labels = Object.keys(stats.recentTrend);
@@ -1190,10 +1207,11 @@ class LogDashboard {
         const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
         const textColor = isDark ? '#94a3b8' : '#64748b';
         const gridColor = isDark ? '#334155' : '#e2e8f0';
-        
+
+        if (typeof Chart === 'undefined') return;  // Charts disabled
         Chart.defaults.color = textColor;
         Chart.defaults.borderColor = gridColor;
-        
+
         Object.values(this.charts).forEach(chart => {
             chart.options.scales && Object.values(chart.options.scales).forEach(scale => {
                 scale.grid = scale.grid || {};
