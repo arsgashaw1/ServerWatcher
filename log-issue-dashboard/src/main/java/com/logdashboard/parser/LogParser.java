@@ -62,6 +62,10 @@ public class LogParser {
     private static final Pattern TIMESTAMP_PATTERN =
         Pattern.compile("^\\d{4}[-/]\\d{2}[-/]\\d{2}[T\\s]\\d{2}:\\d{2}");
 
+    // Timestamp at the start of a line, e.g. "2026-09-29 09:00:03.123 " or "2026-09-29T09:00:03,5 "
+    private static final Pattern LEADING_TIMESTAMP =
+        Pattern.compile("^\\s*\\d{4}[-/]\\d{2}[-/]\\d{2}[T\\s]\\d{2}:\\d{2}(?::\\d{2}(?:[.,]\\d+)?)?\\s*");
+
     // Class name suffixes recognized when extracting exception types
     private static final String[] EXCEPTION_SUFFIXES = {"Exception", "Error", "Throwable"};
 
@@ -980,11 +984,25 @@ public class LogParser {
     /**
      * Extracts the message portion from an exception line.
      */
-    private String extractMessage(String line) {
-        // Try to extract message after the exception type
-        int colonIndex = line.indexOf(':');
-        if (colonIndex > 0 && colonIndex < line.length() - 1) {
-            String afterColon = line.substring(colonIndex + 1).trim();
+    static String extractMessage(String line) {
+        // Prefer the text after "SomeException:" wherever it appears in the line
+        String exceptionType = findExceptionClassName(line);
+        if (exceptionType != null) {
+            int end = line.indexOf(exceptionType) + exceptionType.length();
+            if (end < line.length() && line.charAt(end) == ':') {
+                String message = line.substring(end + 1).trim();
+                if (!message.isEmpty()) {
+                    return message;
+                }
+            }
+        }
+
+        // Otherwise split on colons, ignoring a leading timestamp: its colons
+        // ("09:00:03") used to be mistaken for the message separator
+        String text = LEADING_TIMESTAMP.matcher(line).replaceFirst("");
+        int colonIndex = text.indexOf(':');
+        if (colonIndex > 0 && colonIndex < text.length() - 1) {
+            String afterColon = text.substring(colonIndex + 1).trim();
             // Check if there's another colon (for nested messages)
             int secondColon = afterColon.indexOf(':');
             if (secondColon > 0) {
