@@ -293,7 +293,7 @@ public class ConfigApiServlet extends HttpServlet {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("directories", directories);
         response.put("totalCount", directories.size());
-        response.put("requiresAuth", config.hasAdminCredentials());
+        response.put("requiresAuth", false);  // Internal tool: no admin login
         
         out.write(GSON.toJson(response));
     }
@@ -320,7 +320,7 @@ public class ConfigApiServlet extends HttpServlet {
         }
         status.put("filePatterns", config.getFilePatterns());
         status.put("configPath", configLoader.getConfigFilePath().toString());
-        status.put("requiresAuth", config.hasAdminCredentials());
+        status.put("requiresAuth", false);  // Internal tool: no admin login
         
         out.write(GSON.toJson(status));
     }
@@ -550,7 +550,7 @@ public class ConfigApiServlet extends HttpServlet {
     private void handleGetFilePatterns(PrintWriter out) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("patterns", config.getFilePatterns());
-        result.put("requiresAuth", config.hasAdminCredentials());
+        result.put("requiresAuth", false);  // Internal tool: no admin login
         out.write(GSON.toJson(result));
     }
     
@@ -567,7 +567,7 @@ public class ConfigApiServlet extends HttpServlet {
         result.put("webServerPort", config.getWebServerPort());
         result.put("storageType", config.getStorageType());
         result.put("databasePath", config.getDatabasePath());
-        result.put("requiresAuth", config.hasAdminCredentials());
+        result.put("requiresAuth", false);  // Internal tool: no admin login
         out.write(GSON.toJson(result));
     }
     

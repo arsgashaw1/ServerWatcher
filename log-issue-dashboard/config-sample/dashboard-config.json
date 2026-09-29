@@ -97,7 +97,5 @@
   "databasePath": "data/log-dashboard",
   "_databasePath_comment": "Path to H2 database file (without .mv.db extension). Relative paths are resolved from the JAR file's directory. Use absolute path like '/var/data/sentinel/db' to store elsewhere.",
   
-  "adminUsername": "admin",
-  "adminPassword": "",
-  "_admin_comment": "Admin credentials for infrastructure management (Servers/VMs) and configuration changes. No password ships with the sample: set a strong adminPassword before use. While it is empty, these pages are read-only."
+  "_access_comment": "No login: this is an internal tool, and anyone who can reach the dashboard can change servers, VMs and configuration. Run it only on a trusted internal network."
 }

@@ -5,20 +5,23 @@
 class VmManager {
     constructor() {
         this.vms = [];
-        this.isAdmin = false;
-        this.adminCredentials = null;
+        // Internal tool: no login, everyone can add, edit and delete VMs and view their passwords
+        this.isAdmin = true;
+        this.adminCredentials = { username: '', password: '' };
         this.editingVmId = null;
         this.deletingVmId = null;
         this.showPasswords = {};
-        
+
         this.init();
     }
-    
+
     init() {
         this.setupTheme();
         this.setupEventListeners();
+        const adminSection = document.getElementById('adminSection');
+        if (adminSection) adminSection.style.display = 'none';
+        this.updateAdminUI();
         this.loadVms();
-        this.checkStoredCredentials();
     }
     
     // Theme handling

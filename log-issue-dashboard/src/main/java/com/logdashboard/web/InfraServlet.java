@@ -203,79 +203,24 @@ public class InfraServlet extends HttpServlet {
     
     // ==================== Authentication ====================
     
-    /**
-     * Checks if the request has valid admin authentication.
-     * Returns false with error response if authentication fails.
-     */
+    // Internal tool: no admin login. Everyone who can reach the dashboard may view and
+    // change servers and VMs, including VM passwords.
+
     private boolean checkAdminAuth(HttpServletRequest req, HttpServletResponse resp, PrintWriter out) {
-        String username = req.getHeader("X-Admin-Username");
-        String password = req.getHeader("X-Admin-Password");
-        
-        if (!infrastructureStore.isAdminConfigured()) {
-            resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-            out.write(GSON.toJson(error("Admin credentials not configured. Please set 'adminUsername' and 'adminPassword' in dashboard-config.json")));
-            return false;
-        }
-        
-        if (username == null || password == null) {
-            resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            out.write(GSON.toJson(error("Admin credentials required. Please provide X-Admin-Username and X-Admin-Password headers.")));
-            return false;
-        }
-        
-        if (!infrastructureStore.validateAdmin(username, password)) {
-            resp.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            out.write(GSON.toJson(error("Invalid admin credentials.")));
-            return false;
-        }
-        
         return true;
     }
-    
-    /**
-     * Checks if the request has valid admin authentication without sending error response.
-     * Used for optional authentication (e.g., to determine what data to show).
-     */
+
     private boolean isAdminAuthenticated(HttpServletRequest req) {
-        String username = req.getHeader("X-Admin-Username");
-        String password = req.getHeader("X-Admin-Password");
-        
-        if (username == null || password == null) {
-            return false;
-        }
-        
-        return infrastructureStore.validateAdmin(username, password);
+        return true;
     }
-    
+
     /**
-     * Handles auth validation request - used by frontend to verify credentials.
+     * Kept for older clients; always reports access as granted.
      */
     private void handleValidateAuth(HttpServletRequest req, PrintWriter out, HttpServletResponse resp) {
-        String username = req.getHeader("X-Admin-Username");
-        String password = req.getHeader("X-Admin-Password");
-        
         Map<String, Object> response = new LinkedHashMap<>();
-        
-        if (!infrastructureStore.isAdminConfigured()) {
-            resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-            response.put("valid", false);
-            response.put("configured", false);
-            response.put("error", "Admin credentials not configured on server");
-        } else if (username == null || password == null) {
-            resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.put("valid", false);
-            response.put("configured", true);
-            response.put("error", "Credentials not provided");
-        } else if (infrastructureStore.validateAdmin(username, password)) {
-            response.put("valid", true);
-            response.put("configured", true);
-        } else {
-            resp.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            response.put("valid", false);
-            response.put("configured", true);
-            response.put("error", "Invalid credentials");
-        }
-        
+        response.put("valid", true);
+        response.put("configured", true);
         out.write(GSON.toJson(response));
     }
     

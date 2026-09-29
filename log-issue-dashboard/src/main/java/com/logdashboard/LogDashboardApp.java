@@ -162,12 +162,7 @@ public class LogDashboardApp {
                 dumpProcessingStore = new DumpProcessingStore(databaseManager);
                 dumpProcessingStore.initialize();
                 
-                if (config.hasAdminCredentials()) {
-                    System.out.println("Infrastructure management enabled with admin authentication.");
-                } else {
-                    System.out.println("Infrastructure management enabled (read-only mode).");
-                    System.out.println("WARNING: Set 'adminUsername' and 'adminPassword' in config to enable write access.");
-                }
+                System.out.println("Infrastructure management enabled (no login required).");
             } catch (SQLException e) {
                 System.err.println("Failed to initialize H2 database: " + e.getMessage());
                 System.err.println("Falling back to in-memory storage.");

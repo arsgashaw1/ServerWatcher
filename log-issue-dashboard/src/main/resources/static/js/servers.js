@@ -5,19 +5,22 @@
 class ServerManager {
     constructor() {
         this.servers = [];
-        this.isAdmin = false;
-        this.adminCredentials = null;
+        // Internal tool: no login, everyone can add, edit and delete servers
+        this.isAdmin = true;
+        this.adminCredentials = { username: '', password: '' };
         this.editingServerId = null;
         this.deletingServerId = null;
-        
+
         this.init();
     }
-    
+
     init() {
         this.setupTheme();
         this.setupEventListeners();
+        const adminSection = document.getElementById('adminSection');
+        if (adminSection) adminSection.style.display = 'none';
+        this.updateAdminUI();
         this.loadServers();
-        this.checkStoredCredentials();
     }
     
     // Theme handling

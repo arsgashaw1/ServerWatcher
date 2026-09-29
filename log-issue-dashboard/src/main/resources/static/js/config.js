@@ -409,8 +409,8 @@ class ConfigManager {
             statusEl.classList.remove('authenticated');
         } else {
             statusEl.innerHTML = `
-                <span class="auth-icon">⚠️</span>
-                <span class="auth-text">Auth not configured</span>
+                <span class="auth-icon">🔓</span>
+                <span class="auth-text">Open access</span>
             `;
             statusEl.classList.remove('authenticated');
         }
