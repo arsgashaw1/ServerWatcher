@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Interface for issue storage backends.
@@ -119,6 +120,25 @@ public interface IssueRepository {
     default long getFilteredIssuesCount(Severity severity, String serverName,
                                         LocalDateTime from, LocalDateTime to) {
         return getFilteredIssuesCount(severity, serverName, null, from, to);
+    }
+
+    /**
+     * Passes every issue matching the filters (newest first) to the action, without the
+     * result cap of getFilteredIssues. Used for exports.
+     *
+     * The default pages through getFilteredIssues; callers should bound "to" (e.g. to the
+     * export start time) so issues added during the export do not shift pages.
+     */
+    default void forEachFilteredIssue(Severity severity, String serverName, String searchText,
+                                      LocalDateTime from, LocalDateTime to, Consumer<LogIssue> action) {
+        final int pageSize = 5000;
+        for (int offset = 0; ; offset += pageSize) {
+            List<LogIssue> page = getFilteredIssues(severity, serverName, searchText, from, to, offset, pageSize);
+            page.forEach(action);
+            if (page.size() < pageSize) {
+                return;
+            }
+        }
     }
     
     /**

@@ -25,6 +25,7 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * REST API servlet for the log dashboard.
@@ -495,8 +496,14 @@ public class ApiServlet extends HttpServlet {
         LocalDateTime from = parseDateTime(fromDate, true);
         LocalDateTime to = parseDateTime(toDate, false);
         
-        // Get all filtered issues (no pagination for export)
-        List<LogIssue> issues = issueStore.getFilteredIssues(sev, server, search, from, to, 0, Integer.MAX_VALUE);
+        // Stream every matching issue: list queries are capped at 10,000 rows, which used to
+        // truncate exports silently. Issues detected after the export started are excluded so
+        // the export is a consistent snapshot.
+        LocalDateTime exportStart = LocalDateTime.now();
+        LocalDateTime effectiveTo = (to == null || to.isAfter(exportStart)) ? exportStart : to;
+        LogIssue.Severity severityFilter = sev;
+        IssueSource issues = action ->
+            issueStore.forEachFilteredIssue(severityFilter, server, search, from, effectiveTo, action);
         
         // Set content-type BEFORE getting writer
         if ("csv".equalsIgnoreCase(format)) {
@@ -509,21 +516,31 @@ public class ApiServlet extends HttpServlet {
             resp.setContentType("application/json");
             resp.setCharacterEncoding("UTF-8");
             PrintWriter out = resp.getWriter();
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("exportedAt", LocalDateTime.now().toString());
-            response.put("totalIssues", issues.size());
-            response.put("issues", issues.stream().map(this::issueToMap).toArray());
-            out.write(GSON.toJson(response));
+            // Written incrementally so a large export never builds one huge string in memory
+            out.write("{\"exportedAt\":" + GSON.toJson(exportStart.toString()) + ",\"issues\":[");
+            int[] total = {0};
+            issues.forEach(issue -> {
+                if (total[0]++ > 0) {
+                    out.write(',');
+                }
+                out.write(GSON.toJson(issueToMap(issue)));
+            });
+            out.write("],\"totalIssues\":" + total[0] + "}");
         }
     }
     
-    private void exportAsCsv(List<LogIssue> issues, PrintWriter out) {
+    /** A source of issues that are passed to an action one at a time. */
+    private interface IssueSource {
+        void forEach(Consumer<LogIssue> action);
+    }
+
+    private void exportAsCsv(IssueSource issues, PrintWriter out) {
         // CSV header
-        out.println("ID,Server,File,Line,Type,Severity,Message,Detected At,Acknowledged");
+        out.println("ID,Server,File,Line,Type,Severity,Message,Detected At,Last Seen,Occurrences,Acknowledged");
         
         // CSV rows
-        for (LogIssue issue : issues) {
-            out.printf("\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\",%s%n",
+        issues.forEach(issue -> {
+            out.printf("\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",%d,%s%n",
                     escapeCsv(issue.getId()),
                     escapeCsv(issue.getServerName()),
                     escapeCsv(issue.getFileName()),
@@ -532,14 +549,21 @@ public class ApiServlet extends HttpServlet {
                     issue.getSeverity().name(),
                     escapeCsv(issue.getMessage()),
                     issue.getFormattedTime(),
+                    issue.getFormattedLastSeen(),
+                    issue.getOccurrenceCount(),
                     issue.isAcknowledged()
             );
-        }
+        });
     }
     
     private String escapeCsv(String value) {
         if (value == null) return "";
-        return value.replace("\"", "\"\"");
+        String escaped = value.replace("\"", "\"\"");
+        // Log text is untrusted: prevent spreadsheets from evaluating a cell as a formula
+        if (!escaped.isEmpty() && "=+-@\t\r".indexOf(escaped.charAt(0)) >= 0) {
+            escaped = "'" + escaped;
+        }
+        return escaped;
     }
     
     private void handleAcknowledgeIssue(String id, PrintWriter out, HttpServletResponse resp) {

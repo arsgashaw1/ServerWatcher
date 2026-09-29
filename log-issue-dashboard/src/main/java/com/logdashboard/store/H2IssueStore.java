@@ -11,6 +11,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 /**
  * H2 file-based implementation of issue storage.
@@ -445,23 +446,7 @@ public class H2IssueStore implements IssueRepository {
             StringBuilder sql = new StringBuilder("SELECT * FROM log_issues WHERE 1=1");
             List<Object> params = new ArrayList<>();
             
-            if (severity != null) {
-                sql.append(" AND severity = ?");
-                params.add(severity.name());
-            }
-            if (serverName != null && !serverName.isEmpty()) {
-                sql.append(" AND server_name = ?");
-                params.add(serverName);
-            }
-            appendSearchFilter(sql, params, searchText);
-            if (from != null) {
-                sql.append(" AND detected_at >= ?");
-                params.add(Timestamp.valueOf(from));
-            }
-            if (to != null) {
-                sql.append(" AND detected_at <= ?");
-                params.add(Timestamp.valueOf(to));
-            }
+            appendFilters(sql, params, severity, serverName, searchText, from, to);
             
             sql.append(" ORDER BY detected_at DESC LIMIT ? OFFSET ?");
             params.add(effectiveLimit);
@@ -502,23 +487,7 @@ public class H2IssueStore implements IssueRepository {
             StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM log_issues WHERE 1=1");
             List<Object> params = new ArrayList<>();
             
-            if (severity != null) {
-                sql.append(" AND severity = ?");
-                params.add(severity.name());
-            }
-            if (serverName != null && !serverName.isEmpty()) {
-                sql.append(" AND server_name = ?");
-                params.add(serverName);
-            }
-            appendSearchFilter(sql, params, searchText);
-            if (from != null) {
-                sql.append(" AND detected_at >= ?");
-                params.add(Timestamp.valueOf(from));
-            }
-            if (to != null) {
-                sql.append(" AND detected_at <= ?");
-                params.add(Timestamp.valueOf(to));
-            }
+            appendFilters(sql, params, severity, serverName, searchText, from, to);
             
             try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
                 for (int i = 0; i < params.size(); i++) {
@@ -948,6 +917,66 @@ public class H2IssueStore implements IssueRepository {
 
     private static String escapeLike(String text) {
         return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
+    /**
+     * Appends the WHERE conditions shared by the list, count and export queries.
+     */
+    private static void appendFilters(StringBuilder sql, List<Object> params, Severity severity,
+                                      String serverName, String searchText,
+                                      LocalDateTime from, LocalDateTime to) {
+        if (severity != null) {
+            sql.append(" AND severity = ?");
+            params.add(severity.name());
+        }
+        if (serverName != null && !serverName.isEmpty()) {
+            sql.append(" AND server_name = ?");
+            params.add(serverName);
+        }
+        appendSearchFilter(sql, params, searchText);
+        if (from != null) {
+            sql.append(" AND detected_at >= ?");
+            params.add(Timestamp.valueOf(from));
+        }
+        if (to != null) {
+            sql.append(" AND detected_at <= ?");
+            params.add(Timestamp.valueOf(to));
+        }
+    }
+
+    /**
+     * Streams every matching issue with one uncapped query, so exports are complete and
+     * cannot skip or repeat rows the way offset paging can.
+     */
+    @Override
+    public void forEachFilteredIssue(Severity severity, String serverName, String searchText,
+                                     LocalDateTime from, LocalDateTime to, Consumer<LogIssue> action) {
+        StringBuilder sql = new StringBuilder("SELECT * FROM log_issues WHERE 1=1");
+        List<Object> params = new ArrayList<>();
+        appendFilters(sql, params, severity, serverName, searchText, from, to);
+        sql.append(" ORDER BY detected_at DESC");
+
+        try {
+            Connection conn = dbManager.getConnection();
+            try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+                stmt.setFetchSize(1000);
+                for (int i = 0; i < params.size(); i++) {
+                    Object param = params.get(i);
+                    if (param instanceof Timestamp) {
+                        stmt.setTimestamp(i + 1, (Timestamp) param);
+                    } else {
+                        stmt.setString(i + 1, (String) param);
+                    }
+                }
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        action.accept(resultSetToIssue(rs));
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error exporting issues: " + e.getMessage());
+        }
     }
 
     /**
